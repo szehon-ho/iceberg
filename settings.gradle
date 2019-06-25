@@ -18,7 +18,6 @@
  */
 
 rootProject.name = 'iceberg'
-include 'bom'
 include 'api'
 include 'common'
 include 'core'
@@ -44,7 +43,6 @@ include 'delta-lake'
 include 'kafka-connect'
 include 'open-api'
 
-project(':bom').name = 'iceberg-bom'
 project(':api').name = 'iceberg-api'
 project(':common').name = 'iceberg-common'
 project(':core').name = 'iceberg-core'
