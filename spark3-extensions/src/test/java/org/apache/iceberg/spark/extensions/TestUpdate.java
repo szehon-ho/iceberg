@@ -49,7 +49,6 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.apache.iceberg.TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES;
@@ -249,7 +248,7 @@ public abstract class TestUpdate extends SparkRowLevelOperationsTestBase {
         sql("SELECT * FROM %s ORDER BY id", tableName));
   }
 
-  @Ignore // TODO: fails due to SPARK-33267
+  @Test
   public void testUpdateWithInAndNotInConditions() {
     createAndInitTable("id INT, dep STRING");
 
@@ -270,8 +269,8 @@ public abstract class TestUpdate extends SparkRowLevelOperationsTestBase {
 
     sql("UPDATE %s SET id = 100 WHERE id NOT IN (1, 10)", tableName);
     assertEquals("Should have expected rows",
-        ImmutableList.of(row(100, "hr"), row(100, "hardware"), row(null, "hr")),
-        sql("SELECT * FROM %s ORDER BY id ASC NULLS LAST", tableName));
+        ImmutableList.of(row(100, "hardware"), row(100, "hr"), row(null, "hr")),
+        sql("SELECT * FROM %s ORDER BY id ASC NULLS LAST, dep", tableName));
   }
 
   @Test
@@ -632,7 +631,7 @@ public abstract class TestUpdate extends SparkRowLevelOperationsTestBase {
         sql("SELECT * FROM %s ORDER BY id ASC NULLS LAST", tableName));
   }
 
-  @Ignore // TODO: not supported since SPARK-25154 fix is not yet available
+  @Test
   public void testUpdateWithNotInSubquery() {
     createAndInitTable("id INT, dep STRING");
 
@@ -652,24 +651,13 @@ public abstract class TestUpdate extends SparkRowLevelOperationsTestBase {
 
     sql("UPDATE %s SET id = -1 WHERE id NOT IN (SELECT * FROM updated_id WHERE value IS NOT NULL)", tableName);
     assertEquals("Should have expected rows",
-        ImmutableList.of(row(-1, "hr"), row(-1, "hardware"), row(null, "hr")),
+        ImmutableList.of(row(-1, "hardware"), row(-1, "hr"), row(null, "hr")),
         sql("SELECT * FROM %s ORDER BY id ASC NULLS LAST, dep", tableName));
 
     sql("UPDATE %s SET id = 5 WHERE id NOT IN (SELECT * FROM updated_id) OR dep IN ('software', 'hr')", tableName);
     assertEquals("Should have expected rows",
         ImmutableList.of(row(-1, "hardware"), row(5, "hr"), row(5, "hr")),
         sql("SELECT * FROM %s ORDER BY id ASC NULLS LAST, dep", tableName));
-  }
-
-  @Test
-  public void testUpdateWithNotInSubqueryNotSupported() {
-    createAndInitTable("id INT, dep STRING");
-
-    createOrReplaceView("updated_id", Arrays.asList(-1, -2, null), Encoders.INT());
-
-    AssertHelpers.assertThrows("Should complain about NOT IN subquery",
-        AnalysisException.class, "Null-aware predicate subqueries are not currently supported",
-        () -> sql("UPDATE %s SET id = -1 WHERE id NOT IN (SELECT * FROM updated_id)", tableName));
   }
 
   @Test
