@@ -23,11 +23,13 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
@@ -264,6 +266,12 @@ public class HiveTableOperations extends BaseMetastoreTableOperations {
     if (parameters == null) {
       parameters = new HashMap<>();
     }
+
+    // unset existing PDT properties to make sure we pick new values
+    List<String> existingPdtParams = parameters.keySet().stream()
+        .filter(key -> key.startsWith("pdt.") || key.startsWith("spark.sql.sources."))
+        .collect(Collectors.toList());
+    existingPdtParams.forEach(parameters::remove);
 
     // push all Iceberg table properties into HMS
     icebergTableProps.forEach(parameters::put);
