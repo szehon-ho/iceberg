@@ -36,6 +36,8 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.expressions.NamedReference;
+import org.apache.iceberg.expressions.Term;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -57,7 +59,9 @@ import org.apache.spark.sql.connector.catalog.NamespaceChange;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.TableChange;
+import org.apache.spark.sql.connector.catalog.TableChange.AddPartitionField;
 import org.apache.spark.sql.connector.catalog.TableChange.ColumnChange;
+import org.apache.spark.sql.connector.catalog.TableChange.DropPartitionField;
 import org.apache.spark.sql.connector.catalog.TableChange.RemoveProperty;
 import org.apache.spark.sql.connector.catalog.TableChange.SetProperty;
 import org.apache.spark.sql.connector.catalog.TableChange.SetWriteDistributionAndOrdering;
@@ -193,6 +197,8 @@ public class SparkCatalog extends BaseCatalog {
     SetProperty setSnapshotId = null;
     SetProperty pickSnapshotId = null;
     SetWriteDistributionAndOrdering setWriteDistributionAndOrdering = null;
+    AddPartitionField addPartitionField = null;
+    DropPartitionField dropPartitionField = null;
     List<TableChange> propertyChanges = Lists.newArrayList();
     List<TableChange> schemaChanges = Lists.newArrayList();
 
@@ -214,6 +220,10 @@ public class SparkCatalog extends BaseCatalog {
         schemaChanges.add(change);
       } else if (change instanceof SetWriteDistributionAndOrdering) {
         setWriteDistributionAndOrdering = (SetWriteDistributionAndOrdering) change;
+      } else if (change instanceof AddPartitionField) {
+        addPartitionField = (AddPartitionField) change;
+      } else if (change instanceof DropPartitionField) {
+        dropPartitionField = (DropPartitionField) change;
       } else {
         throw new UnsupportedOperationException("Cannot apply unknown table change: " + change);
       }
@@ -223,7 +233,8 @@ public class SparkCatalog extends BaseCatalog {
       Table table = load(ident);
       commitChanges(
           table, setLocation, setSnapshotId, pickSnapshotId, propertyChanges,
-          schemaChanges, setWriteDistributionAndOrdering);
+          schemaChanges, setWriteDistributionAndOrdering, addPartitionField,
+          dropPartitionField);
     } catch (org.apache.iceberg.exceptions.NoSuchTableException e) {
       throw new NoSuchTableException(ident);
     }
@@ -410,7 +421,9 @@ public class SparkCatalog extends BaseCatalog {
   private static void commitChanges(Table table, SetProperty setLocation, SetProperty setSnapshotId,
                                     SetProperty pickSnapshotId, List<TableChange> propertyChanges,
                                     List<TableChange> schemaChanges,
-                                    SetWriteDistributionAndOrdering setWriteDistributionAndOrdering) {
+                                    SetWriteDistributionAndOrdering setWriteDistributionAndOrdering,
+                                    AddPartitionField addPartitionField,
+                                    DropPartitionField dropPartitionField) {
     // don't allow setting the snapshot and picking a commit at the same time because order is ambiguous and choosing
     // one order leads to different results
     Preconditions.checkArgument(setSnapshotId == null || pickSnapshotId == null,
@@ -445,6 +458,26 @@ public class SparkCatalog extends BaseCatalog {
       transaction.updateProperties()
           .set(WRITE_DISTRIBUTION_MODE, distributionMode.modeName())
           .commit();
+    }
+
+    if (addPartitionField != null) {
+      transaction.updateSpec()
+          .addField(addPartitionField.name(), Spark3Util.convert(addPartitionField.transform()))
+          .commit();
+    }
+
+    if (dropPartitionField != null) {
+      Schema schema = transaction.table().schema();
+      Term term = Spark3Util.convert(dropPartitionField.transform());
+      if (term instanceof NamedReference && schema.findField(((NamedReference<?>) term).name()) == null) {
+        transaction.updateSpec()
+            .removeField(((NamedReference<?>) term).name())
+            .commit();
+      } else {
+        transaction.updateSpec()
+            .removeField(term)
+            .commit();
+      }
     }
 
     if (!propertyChanges.isEmpty()) {
