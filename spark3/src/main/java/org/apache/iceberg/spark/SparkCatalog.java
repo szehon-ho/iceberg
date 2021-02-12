@@ -26,6 +26,8 @@ import java.util.TreeMap;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CachingCatalog;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.DistributionMode;
+import org.apache.iceberg.ReplaceSortOrder;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.Transaction;
@@ -62,6 +64,8 @@ import org.apache.spark.sql.connector.catalog.TableChange.SetWriteDistributionAn
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+
+import static org.apache.iceberg.TableProperties.WRITE_DISTRIBUTION_MODE;
 
 /**
  * A Spark TableCatalog implementation that wraps an Iceberg {@link Catalog}.
@@ -188,6 +192,7 @@ public class SparkCatalog extends BaseCatalog {
     SetProperty setLocation = null;
     SetProperty setSnapshotId = null;
     SetProperty pickSnapshotId = null;
+    SetWriteDistributionAndOrdering setWriteDistributionAndOrdering = null;
     List<TableChange> propertyChanges = Lists.newArrayList();
     List<TableChange> schemaChanges = Lists.newArrayList();
 
@@ -207,6 +212,8 @@ public class SparkCatalog extends BaseCatalog {
         propertyChanges.add(change);
       } else if (change instanceof ColumnChange) {
         schemaChanges.add(change);
+      } else if (change instanceof SetWriteDistributionAndOrdering) {
+        setWriteDistributionAndOrdering = (SetWriteDistributionAndOrdering) change;
       } else {
         throw new UnsupportedOperationException("Cannot apply unknown table change: " + change);
       }
@@ -214,7 +221,9 @@ public class SparkCatalog extends BaseCatalog {
 
     try {
       Table table = load(ident);
-      commitChanges(table, setLocation, setSnapshotId, pickSnapshotId, propertyChanges, schemaChanges);
+      commitChanges(
+          table, setLocation, setSnapshotId, pickSnapshotId, propertyChanges,
+          schemaChanges, setWriteDistributionAndOrdering);
     } catch (org.apache.iceberg.exceptions.NoSuchTableException e) {
       throw new NoSuchTableException(ident);
     }
@@ -400,7 +409,8 @@ public class SparkCatalog extends BaseCatalog {
 
   private static void commitChanges(Table table, SetProperty setLocation, SetProperty setSnapshotId,
                                     SetProperty pickSnapshotId, List<TableChange> propertyChanges,
-                                    List<TableChange> schemaChanges) {
+                                    List<TableChange> schemaChanges,
+                                    SetWriteDistributionAndOrdering setWriteDistributionAndOrdering) {
     // don't allow setting the snapshot and picking a commit at the same time because order is ambiguous and choosing
     // one order leads to different results
     Preconditions.checkArgument(setSnapshotId == null || pickSnapshotId == null,
@@ -422,6 +432,18 @@ public class SparkCatalog extends BaseCatalog {
     if (setLocation != null) {
       transaction.updateLocation()
           .setLocation(setLocation.value())
+          .commit();
+    }
+
+    if (setWriteDistributionAndOrdering != null) {
+      ReplaceSortOrder replaceBuilder = transaction.replaceSortOrder();
+      Spark3Util.rebuildSortOrder(replaceBuilder, setWriteDistributionAndOrdering.ordering());
+      replaceBuilder.commit();
+
+      String distributionModeName = setWriteDistributionAndOrdering.distributionMode();
+      DistributionMode distributionMode = DistributionMode.fromName(distributionModeName);
+      transaction.updateProperties()
+          .set(WRITE_DISTRIBUTION_MODE, distributionMode.modeName())
           .commit();
     }
 
