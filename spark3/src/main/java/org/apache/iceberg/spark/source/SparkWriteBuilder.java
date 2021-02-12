@@ -36,6 +36,9 @@ import org.apache.iceberg.types.TypeUtil;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.connector.distributions.Distribution;
+import org.apache.spark.sql.connector.distributions.Distributions;
+import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.write.BatchWrite;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
@@ -133,6 +136,19 @@ class SparkWriteBuilder implements WriteBuilder, SupportsDynamicOverwrite, Suppo
     Broadcast<EncryptionManager> encryptionManager = lazySparkContext().broadcast(table.encryption());
 
     return new SparkWrite(table, io, encryptionManager, writeInfo, appId, wapId, writeSchema, dsSchema) {
+
+      @Override
+      public Distribution requiredDistribution() {
+        // don't request any distribution for row-level operations as Spark takes care of this
+        return overwriteFiles ? Distributions.unspecified() : super.requiredDistribution();
+      }
+
+      @Override
+      public SortOrder[] requiredOrdering() {
+        // don't request any ordering for row-level operations as Spark takes care of this
+        return overwriteFiles ? new SortOrder[]{} : super.requiredOrdering();
+      }
+
       @Override
       public BatchWrite toBatch() {
         if (overwriteByFilter) {

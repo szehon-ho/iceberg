@@ -28,6 +28,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.DataFile;
+import org.apache.iceberg.DistributionMode;
 import org.apache.iceberg.FileFormat;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.IsolationLevel;
@@ -50,16 +51,20 @@ import org.apache.iceberg.io.UnpartitionedWriter;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.iceberg.spark.Spark3Util;
 import org.apache.iceberg.spark.SparkWriteOptions;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
 import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.distributions.Distribution;
+import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.BatchWrite;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
+import org.apache.spark.sql.connector.write.RequiresDistributionAndOrdering;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
@@ -85,8 +90,9 @@ import static org.apache.iceberg.TableProperties.SPARK_WRITE_PARTITIONED_FANOUT_
 import static org.apache.iceberg.TableProperties.WRITE_TARGET_FILE_SIZE_BYTES;
 import static org.apache.iceberg.TableProperties.WRITE_TARGET_FILE_SIZE_BYTES_DEFAULT;
 
-abstract class SparkWrite implements Write {
+abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
   private static final Logger LOG = LoggerFactory.getLogger(SparkWrite.class);
+  private static final SortOrder[] EMPTY_ORDERING = new SortOrder[0];
 
   private final Table table;
   private final String queryId;
@@ -100,6 +106,11 @@ abstract class SparkWrite implements Write {
   private final StructType dsSchema;
   private final Map<String, String> extraSnapshotMetadata;
   private final boolean partitionedFanoutEnabled;
+  private final DistributionMode distributionMode;
+  private final boolean ignoreSortOrder;
+
+  private Distribution requiredDistribution;
+  private SortOrder[] requiredOrdering;
 
   SparkWrite(Table table, Broadcast<FileIO> io, Broadcast<EncryptionManager> encryptionManager,
              LogicalWriteInfo writeInfo, String applicationId, String wapId,
@@ -129,6 +140,36 @@ abstract class SparkWrite implements Write {
         table.properties(), SPARK_WRITE_PARTITIONED_FANOUT_ENABLED, SPARK_WRITE_PARTITIONED_FANOUT_ENABLED_DEFAULT);
     this.partitionedFanoutEnabled = writeInfo.options()
         .getBoolean(SparkWriteOptions.FANOUT_ENABLED, tablePartitionedFanoutEnabled);
+
+    if (writeInfo.options().containsKey(SparkWriteOptions.DISTRIBUTION_MODE)) {
+      String distributionModeName = writeInfo.options().get(SparkWriteOptions.DISTRIBUTION_MODE);
+      this.distributionMode = DistributionMode.fromName(distributionModeName);
+    } else {
+      this.distributionMode = Spark3Util.distributionModeFor(table);
+    }
+
+    this.ignoreSortOrder = writeInfo.options().getBoolean(SparkWriteOptions.IGNORE_SORT_ORDER, false);
+  }
+
+  @Override
+  public Distribution requiredDistribution() {
+    if (requiredDistribution == null) {
+      requiredDistribution = Spark3Util.buildRequiredDistribution(distributionMode, table.spec(), table.sortOrder());
+    }
+    return requiredDistribution;
+  }
+
+  @Override
+  public SortOrder[] requiredOrdering() {
+    if (requiredOrdering == null) {
+      if (ignoreSortOrder) {
+        requiredOrdering = EMPTY_ORDERING;
+      } else {
+        Distribution distribution = requiredDistribution();
+        requiredOrdering = Spark3Util.buildRequiredOrdering(distribution, table.spec(), table.sortOrder());
+      }
+    }
+    return requiredOrdering;
   }
 
   BatchWrite asBatchAppend() {
