@@ -19,6 +19,9 @@
 
 package org.apache.iceberg.actions;
 
+import org.junit.Ignore;
+
+@Ignore
 public class TestRewriteManifestsAction3 extends TestRewriteManifestsAction {
   public TestRewriteManifestsAction3(String snapshotIdInheritanceEnabled) {
     super(snapshotIdInheritanceEnabled);

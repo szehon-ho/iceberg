@@ -19,5 +19,8 @@
 
 package org.apache.iceberg.spark.source;
 
+import org.junit.Ignore;
+
+@Ignore
 public class TestSparkDataFile3 extends TestSparkDataFile {
 }
