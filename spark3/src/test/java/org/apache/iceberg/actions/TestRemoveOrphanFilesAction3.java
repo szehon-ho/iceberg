@@ -33,7 +33,6 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore
 public class TestRemoveOrphanFilesAction3 extends TestRemoveOrphanFilesAction {
   @Test
   public void testSparkCatalogTable() throws Exception {

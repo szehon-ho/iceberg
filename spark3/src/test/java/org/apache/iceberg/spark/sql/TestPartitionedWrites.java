@@ -31,10 +31,8 @@ import org.apache.spark.sql.functions;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore
 public class TestPartitionedWrites extends SparkCatalogTestBase {
   public TestPartitionedWrites(String catalogName, String implementation, Map<String, String> config) {
     super(catalogName, implementation, config);

@@ -19,8 +19,5 @@
 
 package org.apache.iceberg.actions;
 
-import org.junit.Ignore;
-
-@Ignore
 public class TestRewriteDataFilesAction3 extends TestRewriteDataFilesAction {
 }

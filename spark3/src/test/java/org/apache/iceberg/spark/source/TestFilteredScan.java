@@ -62,7 +62,6 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -71,7 +70,6 @@ import org.junit.runners.Parameterized;
 
 import static org.apache.iceberg.Files.localOutput;
 
-@Ignore
 @RunWith(Parameterized.class)
 public class TestFilteredScan {
   private static final Configuration CONF = new Configuration();
