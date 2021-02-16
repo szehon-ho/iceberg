@@ -294,10 +294,16 @@ public class Spark3Util {
 
   public static Distribution buildRequiredDistribution(org.apache.iceberg.Table table) {
     DistributionMode distributionMode = distributionModeFor(table);
-    return buildRequiredDistribution(distributionMode, table.spec(), table.sortOrder());
+    return buildRequiredDistribution(distributionMode, table.schema(), table.spec(), table.sortOrder());
   }
 
   public static Distribution buildRequiredDistribution(DistributionMode distributionMode,
+                                                       org.apache.iceberg.Table table) {
+    return buildRequiredDistribution(distributionMode, table.schema(), table.spec(), table.sortOrder());
+  }
+
+  public static Distribution buildRequiredDistribution(DistributionMode distributionMode,
+                                                       Schema schema,
                                                        PartitionSpec spec,
                                                        org.apache.iceberg.SortOrder sortOrder) {
     switch (distributionMode) {
@@ -313,7 +319,7 @@ public class Spark3Util {
         if (spec.isUnpartitioned() && sortOrder.isUnsorted()) {
           return Distributions.unspecified();
         } else {
-          org.apache.iceberg.SortOrder requiredSortOrder = SortOrderUtil.buildSortOrder(spec, sortOrder);
+          org.apache.iceberg.SortOrder requiredSortOrder = SortOrderUtil.buildSortOrder(schema, spec, sortOrder);
           return Distributions.ordered(convert(requiredSortOrder));
         }
       default:
@@ -322,16 +328,18 @@ public class Spark3Util {
   }
 
   public static SortOrder[] buildRequiredOrdering(Distribution distribution, org.apache.iceberg.Table table) {
-    return buildRequiredOrdering(distribution, table.spec(), table.sortOrder());
+    return buildRequiredOrdering(distribution, table.schema(), table.spec(), table.sortOrder());
   }
 
-  public static SortOrder[] buildRequiredOrdering(Distribution distribution, PartitionSpec spec,
+  public static SortOrder[] buildRequiredOrdering(Distribution distribution,
+                                                  Schema schema,
+                                                  PartitionSpec spec,
                                                   org.apache.iceberg.SortOrder sortOrder) {
     if (distribution instanceof OrderedDistribution) {
       OrderedDistribution orderedDistribution = (OrderedDistribution) distribution;
       return orderedDistribution.ordering();
     } else {
-      org.apache.iceberg.SortOrder requiredSortOrder = SortOrderUtil.buildSortOrder(spec, sortOrder);
+      org.apache.iceberg.SortOrder requiredSortOrder = SortOrderUtil.buildSortOrder(schema, spec, sortOrder);
       return convert(requiredSortOrder);
     }
   }
@@ -396,6 +404,12 @@ public class Spark3Util {
   public static SortOrder[] convert(org.apache.iceberg.SortOrder sortOrder) {
     List<OrderField> converted = SortOrderVisitor.visit(sortOrder, new SortOrderToSpark());
     return converted.toArray(new OrderField[0]);
+  }
+
+  public static org.apache.iceberg.SortOrder toSortOrder(Schema schema, SortOrder[] ordering) {
+    org.apache.iceberg.SortOrder.Builder builder = org.apache.iceberg.SortOrder.builderFor(schema);
+    Spark3Util.rebuildSortOrder(builder, ordering);
+    return builder.build();
   }
 
   /**

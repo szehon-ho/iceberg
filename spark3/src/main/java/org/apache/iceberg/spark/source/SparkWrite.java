@@ -154,7 +154,7 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
   @Override
   public Distribution requiredDistribution() {
     if (requiredDistribution == null) {
-      requiredDistribution = Spark3Util.buildRequiredDistribution(distributionMode, table.spec(), table.sortOrder());
+      requiredDistribution = Spark3Util.buildRequiredDistribution(distributionMode, table);
     }
     return requiredDistribution;
   }
@@ -166,7 +166,7 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
         requiredOrdering = EMPTY_ORDERING;
       } else {
         Distribution distribution = requiredDistribution();
-        requiredOrdering = Spark3Util.buildRequiredOrdering(distribution, table.spec(), table.sortOrder());
+        requiredOrdering = Spark3Util.buildRequiredOrdering(distribution, table);
       }
     }
     return requiredOrdering;
