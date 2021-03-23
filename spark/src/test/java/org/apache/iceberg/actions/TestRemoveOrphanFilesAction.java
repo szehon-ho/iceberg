@@ -48,6 +48,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkTestBase;
+import org.apache.iceberg.spark.actions.BaseRemoveOrphanFilesSparkAction;
 import org.apache.iceberg.spark.source.ThreeColumnRecord;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.Dataset;
@@ -947,7 +948,7 @@ public abstract class TestRemoveOrphanFilesAction extends SparkTestBase {
 
     List<Row> validFilesData = getRowsWithFilePath(validFilePathPrefix, numberOfValidFiles);
 
-    Dataset<Row> validFileDS = RemoveOrphanFilesAction
+    Dataset<Row> validFileDS = BaseRemoveOrphanFilesSparkAction
             .addFilePathOnlyColumn(
                     spark.createDataset(validFilesData, RowEncoder.apply(constructStructureWithString())));
 
@@ -961,11 +962,11 @@ public abstract class TestRemoveOrphanFilesAction extends SparkTestBase {
       actualFilesData.addAll(expectedOrphanFiles);
     }
 
-    Dataset<Row> actualFileDS = RemoveOrphanFilesAction
+    Dataset<Row> actualFileDS = BaseRemoveOrphanFilesSparkAction
             .addFilePathOnlyColumn(
                     spark.createDataset(actualFilesData, RowEncoder.apply(constructStructureWithString())));
 
-    List<String> orphanFiles = RemoveOrphanFilesAction.findOrphanFiles(validFileDS, actualFileDS);
+    List<String> orphanFiles = BaseRemoveOrphanFilesSparkAction.findOrphanFiles(validFileDS, actualFileDS);
 
     Assert.assertEquals(expectedOrphanFiles.stream().map(row -> row.get(0).toString())
             .collect(Collectors.toList()), orphanFiles);
