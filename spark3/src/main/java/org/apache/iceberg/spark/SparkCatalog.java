@@ -245,6 +245,7 @@ public class SparkCatalog extends BaseCatalog {
     return new StagedSparkTable(transaction);
   }
 
+  @SuppressWarnings("checkstyle:CyclomaticComplexity")
   @Override
   public SparkTable alterTable(Identifier ident, TableChange... changes) throws NoSuchTableException {
     SetProperty setLocation = null;
