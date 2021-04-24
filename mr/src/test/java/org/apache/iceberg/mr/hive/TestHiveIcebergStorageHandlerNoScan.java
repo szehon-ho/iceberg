@@ -63,6 +63,7 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -153,7 +154,7 @@ public class TestHiveIcebergStorageHandlerNoScan {
     HiveIcebergStorageHandlerTestUtils.close(shell);
   }
 
-  @Test
+  @Ignore
   public void testCreateDropTable() throws TException, IOException, InterruptedException {
     TableIdentifier identifier = TableIdentifier.of("default", "customers");
 
