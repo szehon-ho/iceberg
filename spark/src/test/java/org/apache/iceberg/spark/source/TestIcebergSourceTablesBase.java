@@ -942,4 +942,46 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
 
     Assert.assertEquals("Rows must match", records, actualRecords);
   }
+
+  @Test
+  public void test() throws InterruptedException {
+    TableIdentifier tableIdentifier = TableIdentifier.of("db", "table");
+    Table table = createTable(tableIdentifier, SCHEMA, PartitionSpec.unpartitioned());
+
+    List<SimpleRecord> records = Lists.newArrayList(
+        new SimpleRecord(1, "1")
+    );
+
+    Dataset<Row> df = spark.createDataFrame(records, SimpleRecord.class);
+
+    df.select("id", "data").write()
+        .format("iceberg")
+        .mode("append")
+        .save(loadLocation(tableIdentifier));
+
+    df.write().mode("append").parquet(table.location() + "/data");
+
+    // sleep for 1 second to ensure files will be old enough
+    Thread.sleep(1000);
+
+    Actions actions = Actions.forTable(table);
+
+    List<String> result1 = actions.removeOrphanFiles()
+        .location(table.location() + "/metadata")
+        .olderThan(System.currentTimeMillis())
+        .execute();
+    Assert.assertTrue("Should not delete any metadata files", result1.isEmpty());
+
+    List<String> result2 = actions.removeOrphanFiles()
+        .olderThan(System.currentTimeMillis())
+        .execute();
+    Assert.assertEquals("Should delete 1 data file", 1, result2.size());
+
+    Dataset<Row> resultDF = spark.read().format("iceberg").load(loadLocation(tableIdentifier));
+    List<SimpleRecord> actualRecords = resultDF
+        .as(Encoders.bean(SimpleRecord.class))
+        .collectAsList();
+
+    Assert.assertEquals("Rows must match", records, actualRecords);
+  }
 }
