@@ -25,7 +25,10 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
+
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
@@ -153,8 +156,8 @@ public class BaseExpireSnapshotsSparkAction
    */
   public Dataset<Row> expire() {
     if (expiredFiles == null) {
-      // fetch metadata before expiration
-      Dataset<Row> originalFiles = buildValidFileDF(ops.current());
+      // Save old metadata
+      TableMetadata old = ops.current();
 
       // perform expiration
       org.apache.iceberg.ExpireSnapshots expireSnapshots = table.expireSnapshots().cleanExpiredFiles(false);
@@ -170,12 +173,13 @@ public class BaseExpireSnapshotsSparkAction
         expireSnapshots = expireSnapshots.retainLast(retainLastValue);
       }
 
+      List<Snapshot> expired = expireSnapshots.apply();
+      Set<Long> expiredSnapshotIds = expired.stream().map(Snapshot::snapshotId).collect(Collectors.toSet());
       expireSnapshots.commit();
 
-      // fetch metadata after expiration
-      Dataset<Row> validFiles = buildValidFileDF(ops.refresh());
-
       // determine expired files
+      Dataset<Row> validFiles = buildValidFileDF(ops.refresh());
+      Dataset<Row> originalFiles = buildFilteredFileDF(old, expiredSnapshotIds);
       this.expiredFiles = originalFiles.except(validFiles);
     }
 
@@ -229,6 +233,13 @@ public class BaseExpireSnapshotsSparkAction
     return appendTypeString(buildValidDataFileDF(staticTable), DATA_FILE)
         .union(appendTypeString(buildManifestFileDF(staticTable), MANIFEST))
         .union(appendTypeString(buildManifestListDF(staticTable), MANIFEST_LIST));
+  }
+
+  private Dataset<Row> buildFilteredFileDF(TableMetadata metadata, Set<Long> snapshotIds) {
+    Table staticTable = newStaticTable(metadata, this.table.io());
+    return appendTypeString(buildFilteredDataFileDF(staticTable, snapshotIds), DATA_FILE)
+        .union(appendTypeString(buildFilteredManifestFileDF(staticTable, snapshotIds), MANIFEST))
+        .union(appendTypeString(buildFilteredManifestListDF(staticTable, snapshotIds), MANIFEST_LIST));
   }
 
   /**

@@ -59,7 +59,8 @@ import org.junit.rules.TemporaryFolder;
 
 import static org.apache.iceberg.types.Types.NestedField.optional;
 
-public abstract class TestExpireSnapshotsAction extends SparkTestBase {
+public abstract class
+TestExpireSnapshotsAction extends SparkTestBase {
   private static final HadoopTables TABLES = new HadoopTables(new Configuration());
   private static final Schema SCHEMA = new Schema(
       optional(1, "c1", Types.IntegerType.get()),
@@ -174,6 +175,49 @@ public abstract class TestExpireSnapshotsAction extends SparkTestBase {
 
     table.newRewrite()
         .rewriteFiles(ImmutableSet.of(FILE_A), ImmutableSet.of(FILE_C))
+        .commit();
+
+    long t4 = rightAfterSnapshot();
+
+    Set<String> deletedFiles = Sets.newHashSet();
+    Set<String> deleteThreads = ConcurrentHashMap.newKeySet();
+    AtomicInteger deleteThreadsIndex = new AtomicInteger(0);
+
+    ExpireSnapshotsActionResult result = Actions.forTable(table).expireSnapshots()
+        .executeDeleteWith(Executors.newFixedThreadPool(4, runnable -> {
+          Thread thread = new Thread(runnable);
+          thread.setName("remove-snapshot-" + deleteThreadsIndex.getAndIncrement());
+          thread.setDaemon(true); // daemon threads will be terminated abruptly when the JVM exits
+          return thread;
+        }))
+        .expireOlderThan(t4)
+        .deleteWith(s -> {
+          deleteThreads.add(Thread.currentThread().getName());
+          deletedFiles.add(s);
+        })
+        .execute();
+
+    // Verifies that the delete methods ran in the threads created by the provided ExecutorService ThreadFactory
+    Assert.assertEquals(deleteThreads,
+        Sets.newHashSet("remove-snapshot-0", "remove-snapshot-1", "remove-snapshot-2", "remove-snapshot-3"));
+
+    Assert.assertTrue("FILE_A should be deleted", deletedFiles.contains(FILE_A.path().toString()));
+    Assert.assertTrue("FILE_B should be deleted", deletedFiles.contains(FILE_B.path().toString()));
+
+    checkExpirationResults(2L, 3L, 3L, result);
+  }
+
+  @Test
+  public void dataFilesCleanupWithNoManifestLists() throws IOException {
+
+    table.updateProperties().set(TableProperties.MANIFEST_LISTS_ENABLED, "false").commit();
+
+    table.newFastAppend()
+        .appendFile(FILE_A)
+        .commit();
+
+    table.newFastAppend()
+        .appendFile(FILE_B)
         .commit();
 
     long t4 = rightAfterSnapshot();
