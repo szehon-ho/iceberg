@@ -20,7 +20,10 @@
 package org.apache.iceberg;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.TableMetadata.MetadataLogEntry;
 import org.apache.iceberg.hadoop.Util;
@@ -113,5 +116,21 @@ public class ReachableFileUtil {
       }
     }
     return manifestListLocations;
+  }
+
+  /**
+   * Returns locations of manifest lists in a table.
+   *
+   * @param table table for which manifestList needs to be fetched
+   * @param snapshotIds snpashots to filter for
+   * @return the location of manifest Lists
+   */
+  public static List<String> manifestListLocations(Table table, Set<Long> snapshotIds) {
+    Iterable<Snapshot> snapshots = table.snapshots();
+    return StreamSupport.stream(snapshots.spliterator(), false) // not parallel
+        .filter(s -> snapshotIds.contains(s.snapshotId()))
+        .map(Snapshot::manifestListLocation)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toList());
   }
 }

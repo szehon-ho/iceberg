@@ -25,8 +25,11 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import org.apache.iceberg.FileContent;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.SerializableTable;
+import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
@@ -41,6 +44,8 @@ import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.spark.JobGroupInfo;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -147,8 +152,8 @@ public class BaseExpireSnapshotsSparkAction
    */
   public Dataset<Row> expire() {
     if (expiredFiles == null) {
-      // fetch metadata before expiration
-      Dataset<Row> originalFiles = buildValidFileDF(ops.current());
+      // Save old metadata
+      TableMetadata originalTable = ops.current();
 
       // perform expiration
       org.apache.iceberg.ExpireSnapshots expireSnapshots = table.expireSnapshots().cleanExpiredFiles(false);
@@ -166,11 +171,20 @@ public class BaseExpireSnapshotsSparkAction
 
       expireSnapshots.commit();
 
-      // fetch metadata after expiration
-      Dataset<Row> validFiles = buildValidFileDF(ops.refresh());
+      TableMetadata updatedTable = ops.refresh();
+      Set<Long> updatedSnapshotIds = updatedTable.snapshots().stream()
+          .map(Snapshot::snapshotId)
+          .collect(Collectors.toSet());
+      Set<Long> removedSnapshotIds = originalTable.snapshots().stream()
+          .map(Snapshot::snapshotId)
+          .filter(originalId -> !updatedSnapshotIds.contains(originalId))
+          .collect(Collectors.toSet());
+
+      Dataset<Row> validFiles = buildValidFileDF(updatedTable);
+      Dataset<Row> expiredSnapshotFiles = buildFilteredFileDF(originalTable, removedSnapshotIds);
 
       // determine expired files
-      this.expiredFiles = originalFiles.except(validFiles);
+      this.expiredFiles = expiredSnapshotFiles.except(validFiles);
     }
 
     return expiredFiles;
@@ -272,5 +286,16 @@ public class BaseExpireSnapshotsSparkAction
 
     return new BaseExpireSnapshotsActionResult(dataFileCount.get(), posDeleteFileCount.get(),
         eqDeleteFileCount.get(), manifestCount.get(), manifestListCount.get());
+  }
+
+  private Dataset<Row> buildFilteredFileDF(TableMetadata metadata, Set<Long> snapshotIds) {
+    Table staticTable = newStaticTable(metadata, this.table.io());
+    JavaSparkContext context = JavaSparkContext.fromSparkContext(spark().sparkContext());
+    Broadcast<Table> tableBroadcast = context.broadcast(SerializableTable.copyOf(table));
+    Dataset<ManifestFileBean> manifestFiles = buildFilteredManifestFileBeanDF(staticTable, snapshotIds, tableBroadcast);
+
+    return withFileType(buildFilteredDataFileDF(manifestFiles, tableBroadcast), CONTENT_FILE)
+        .union(withFileType(buildFilteredManifestFileDF(manifestFiles), MANIFEST))
+        .union(withFileType(buildFilteredManifestListDF(staticTable, snapshotIds), MANIFEST_LIST));
   }
 }
