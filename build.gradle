@@ -282,6 +282,7 @@ project(':iceberg-aliyun') {
   dependencies {
     implementation project(path: ':iceberg-bundled-guava', configuration: 'shadow')
     api project(':iceberg-api')
+    implementation project(':iceberg-core')
     implementation project(':iceberg-common')
 
     compileOnly 'com.aliyun.oss:aliyun-sdk-oss'
@@ -296,6 +297,7 @@ project(':iceberg-aliyun') {
     }
 
     testImplementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml'
+    testImplementation project(path: ':iceberg-api', configuration: 'testArtifacts')
     testImplementation 'org.springframework:spring-web'
     testImplementation('org.springframework.boot:spring-boot-starter-jetty') {
       exclude module: 'logback-classic'
@@ -425,18 +427,6 @@ project(':iceberg-hive-metastore') {
 
     testImplementation project(path: ':iceberg-api', configuration: 'testArtifacts')
   }
-}
-
-// add enabled Hive version modules to the build
-def hiveVersions = (System.getProperty("hiveVersions") != null ? System.getProperty("hiveVersions") : System.getProperty("defaultHiveVersions")).split(",")
-
-// hive 3 depends on hive 2, so always add hive 2 if hive3 is enabled
-if (hiveVersions.contains("2") || hiveVersions.contains("3")) {
-  apply from: file("$projectDir/hive2.gradle")
-}
-
-if (jdkVersion == '8' && hiveVersions.contains("3")) {
-  apply from: file("$projectDir/hive3.gradle")
 }
 
 project(':iceberg-orc') {
