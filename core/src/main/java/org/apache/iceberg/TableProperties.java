@@ -197,10 +197,6 @@ public class TableProperties {
   public static final MetricsModes.MetricsMode DEFAULT_WRITE_METRICS_MODE_DEFAULT =
       MetricsModes.Truncate.withLength(16);
 
-  // Beyond this number of columns, metrics are disabled unless they are special (like sort-order columns)
-  public static final String METRICS_MAX_COLUMNS = "write.metadata.metrics.max.columns";
-  public static final int METRICS_MAX_COLUMNS_DEFAULT = 100;
-
   public static final String DEFAULT_NAME_MAPPING = "schema.name-mapping.default";
 
   public static final String WRITE_AUDIT_PUBLISH_ENABLED = "write.wap.enabled";
