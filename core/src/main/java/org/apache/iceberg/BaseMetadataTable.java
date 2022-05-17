@@ -26,6 +26,7 @@ import org.apache.iceberg.encryption.EncryptionManager;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.types.Types;
 
 /**
  * Base class for metadata tables.
@@ -60,8 +61,12 @@ public abstract class BaseMetadataTable implements Table, HasTableOperations, Se
    * @return a spec used to rewrite the metadata table filters to partition filters using an inclusive projection
    */
   static PartitionSpec transformSpec(Schema metadataTableSchema, PartitionSpec spec) {
+    return transformSpec(metadataTableSchema, spec.partitionType());
+  }
+
+  static PartitionSpec transformSpec(Schema metadataTableSchema, Types.StructType partitionType) {
     PartitionSpec.Builder identitySpecBuilder = PartitionSpec.builderFor(metadataTableSchema).checkConflicts(false);
-    spec.fields().forEach(pf -> identitySpecBuilder.add(pf.fieldId(), pf.name(), "identity"));
+    partitionType.fields().forEach(pf -> identitySpecBuilder.add(pf.fieldId(), pf.fieldId(), pf.name(), "identity"));
     return identitySpecBuilder.build();
   }
 

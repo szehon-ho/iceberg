@@ -20,11 +20,36 @@
 package org.apache.iceberg.io;
 
 import org.apache.iceberg.MetadataColumns;
+import org.apache.iceberg.Partitioning;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Table;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
 public class DeleteSchemaUtil {
   private DeleteSchemaUtil() {
+  }
+
+  public static Schema metadataTableSchema(Table table) {
+    return metadataTableSchema(table, Partitioning.partitionType(table));
+  }
+
+  public static Schema metadataTableSchema(Table table, Types.StructType partitionType) {
+    Schema result = new Schema(
+        MetadataColumns.DELETE_FILE_PATH,
+        MetadataColumns.DELETE_FILE_POS,
+        Types.NestedField.optional(
+            MetadataColumns.DELETE_FILE_ROW_FIELD_ID, "row", table.schema().asStruct(),
+            MetadataColumns.DELETE_FILE_ROW_DOC));
+
+    if (partitionType.fields().size() > 0) {
+      return TypeUtil.join(result,
+          new Schema(Types.NestedField.required(MetadataColumns.PARTITION_COLUMN_ID,
+              "partition", partitionType)));
+    } else {
+      // avoid returning an empty struct, which is not always supported. instead, drop the partition field
+      return result;
+    }
   }
 
   private static Schema pathPosSchema(Schema rowSchema) {

@@ -108,6 +108,31 @@ public class DataFiles {
         .build();
   }
 
+  public static DataFile fromPositionDelete(DeleteFile deleteFile, PartitionSpec spec) {
+    Preconditions.checkArgument(deleteFile.content().equals(FileContent.POSITION_DELETES),
+        "Expected positional delete file, found %s", deleteFile.content());
+    Metrics metrics = new Metrics(
+        deleteFile.recordCount(),
+        deleteFile.columnSizes(),
+        deleteFile.valueCounts(),
+        deleteFile.nullValueCounts(),
+        deleteFile.nanValueCounts(),
+        deleteFile.lowerBounds(),
+        deleteFile.upperBounds()
+    );
+
+    return DataFiles.builder(spec)
+        .withEncryptionKeyMetadata(deleteFile.keyMetadata())
+        .withFormat(deleteFile.format())
+        .withFileSizeInBytes(deleteFile.fileSizeInBytes())
+        .withPath(deleteFile.path().toString())
+        .withPartition(deleteFile.partition())
+        .withRecordCount(deleteFile.recordCount())
+        .withSortOrder(SortOrder.unsorted())
+        .withMetrics(metrics)
+        .build();
+  }
+
   public static Builder builder(PartitionSpec spec) {
     return new Builder(spec);
   }
