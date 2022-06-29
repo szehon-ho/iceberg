@@ -38,7 +38,7 @@ public class PositionDeletesTable extends BaseMetadataTable {
   }
 
   @Override
-  public TableScan newScan() {
+  public Scan newScan() {
     return new PositionDeletesTableScan(operations(), table(), schema());
   }
 

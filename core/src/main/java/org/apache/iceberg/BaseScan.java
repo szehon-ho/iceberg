@@ -47,7 +47,7 @@ abstract class BaseScan<ThisT, T extends ScanTask, G extends ScanTaskGroup<T>> i
     return ops;
   }
 
-  protected Table table() {
+  public Table table() {
     return table;
   }
 

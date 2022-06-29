@@ -20,32 +20,36 @@
 package org.apache.iceberg;
 
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.ResidualEvaluator;
 import org.apache.iceberg.io.CloseableIterable;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.ParallelIterable;
 import org.apache.iceberg.util.PropertyUtil;
+import org.apache.iceberg.util.SnapshotUtil;
 
-public class PositionDeletesTableScan extends BaseMetadataTableScan {
+public class PositionDeletesTableScan
+    extends BaseScan<TableScan, PositionDeletesScanTask, PositionDeletesScanTaskGroup> implements Scan {
 
   public PositionDeletesTableScan(TableOperations ops, Table table, Schema schema) {
-    super(ops, table, schema, MetadataTableType.POSITION_DELETES);
+    super(ops, table, schema, new TableScanContext());
   }
 
   PositionDeletesTableScan(TableOperations ops, Table table, Schema schema, TableScanContext context) {
-    super(ops, table, schema, MetadataTableType.POSITION_DELETES, context);
+    super(ops, table, schema, context);
   }
 
   @Override
-  protected TableScan newRefinedScan(TableOperations ops, Table table, Schema schema, TableScanContext context) {
+  protected Scan newRefinedScan(TableOperations ops, Table table, Schema schema, TableScanContext context) {
     return new PositionDeletesTableScan(ops, table, schema, context);
   }
 
   @Override
-  protected CloseableIterable<FileScanTask> doPlanFiles() {
+  public CloseableIterable<PositionDeletesScanTask> planFiles() {
     Expression rowFilter = context().rowFilter();
     String schemaString = SchemaParser.toJson(tableSchema());
     boolean ignoreResiduals = context().ignoreResiduals();
@@ -59,7 +63,7 @@ public class PositionDeletesTableScan extends BaseMetadataTableScan {
 
     CloseableIterable<ManifestFile> deleteManifests = CloseableIterable.withNoopClose(
         snapshot().deleteManifests(tableOps().io()));
-    CloseableIterable<CloseableIterable<FileScanTask>> results = CloseableIterable.transform(deleteManifests, m -> {
+    CloseableIterable<CloseableIterable<PositionDeletesScanTask>> results = CloseableIterable.transform(deleteManifests, m -> {
 
       // Filter partitions
       CloseableIterable<ManifestEntry<DeleteFile>> deleteFileEntries = ManifestFiles
@@ -76,8 +80,7 @@ public class PositionDeletesTableScan extends BaseMetadataTableScan {
         ResidualEvaluator residuals = ResidualEvaluator.of(spec, filter, context().caseSensitive());
         String specString = PartitionSpecParser.toJson(spec);
 
-        return new BaseFileScanTask(DataFiles.fromPositionDelete(entry.file(), spec),
-            null, /* Deletes */
+        return new PositionDeletesScanTask(entry.file(),
             schemaString,
             specString,
             residuals);
@@ -88,10 +91,61 @@ public class PositionDeletesTableScan extends BaseMetadataTableScan {
   }
 
   @Override
-  public long targetSplitSize() {
-    long tableValue = tableOps().current().propertyAsLong(
-        TableProperties.SPLIT_SIZE,
-        TableProperties.SPLIT_SIZE_DEFAULT);
-    return PropertyUtil.propertyAsLong(options(), TableProperties.SPLIT_SIZE, tableValue);
+  public CloseableIterable<PositionDeletesScanTaskGroup> planTasks() {
+    return null;
+  }
+
+  @Override
+  public TableScan appendsBetween(long fromSnapshotId, long toSnapshotId) {
+    throw new UnsupportedOperationException("Incremental scan is not supported");
+  }
+
+  @Override
+  public TableScan appendsAfter(long fromSnapshotId) {
+    throw new UnsupportedOperationException("Incremental scan is not supported");
+  }
+
+  @Override
+  public TableScan useSnapshot(long scanSnapshotId) {
+    Preconditions.checkArgument(snapshotId() == null,
+        "Cannot override snapshot, already set to id=%s", snapshotId());
+    Preconditions.checkArgument(tableOps().current().snapshot(scanSnapshotId) != null,
+        "Cannot find snapshot with ID %s", scanSnapshotId);
+    return newRefinedScan(tableOps(), table(), tableSchema(), context().useSnapshotId(scanSnapshotId));
+  }
+
+  @Override
+  public TableScan asOfTime(long timestampMillis) {
+    Preconditions.checkArgument(snapshotId() == null,
+        "Cannot override snapshot, already set to id=%s", snapshotId());
+
+    return useSnapshot(SnapshotUtil.snapshotIdAsOfTime(table(), timestampMillis));
+  }
+
+  @Override
+  public Expression filter() {
+    return context().rowFilter();
+  }
+
+
+  @Override
+  public Snapshot snapshot() {
+    return snapshotId() != null ?
+        tableOps().current().snapshot(snapshotId()) :
+        tableOps().current().currentSnapshot();
+  }
+
+  @Override
+  public boolean isCaseSensitive() {
+    return context().caseSensitive();
+  }
+
+
+  protected ExecutorService planExecutor() {
+    return context().planExecutor();
+  }
+
+  protected Long snapshotId() {
+    return context().snapshotId();
   }
 }

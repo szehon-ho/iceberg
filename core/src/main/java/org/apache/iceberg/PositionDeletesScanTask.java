@@ -19,35 +19,29 @@
 
 package org.apache.iceberg;
 
-import java.util.List;
 import org.apache.iceberg.expressions.ResidualEvaluator;
-import org.apache.iceberg.relocated.com.google.common.base.Joiner;
 import org.apache.iceberg.relocated.com.google.common.base.MoreObjects;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 
-public class BaseFileScanTask extends BaseScanTask<DataFile, FileScanTask> implements FileScanTask {
-  private final DeleteFile[] deletes;
+public class PositionDeletesScanTask extends BaseScanTask<DeleteFile, PositionDeletesScanTask> {
 
   private transient PartitionSpec spec = null;
 
-  public BaseFileScanTask(DataFile file, DeleteFile[] deletes, String schemaString, String specString,
-                   ResidualEvaluator residuals) {
+  public PositionDeletesScanTask(DeleteFile file, String schemaString, String specString,
+                                 ResidualEvaluator residuals) {
     super(file, schemaString, specString, residuals);
-    this.deletes = deletes != null ? deletes : new DeleteFile[0];
+    Preconditions.checkArgument(file.content().equals(FileContent.POSITION_DELETES), "Trying to construct position" +
+        "delete scan task with %content file", file.content());
   }
 
   @Override
-  public List<DeleteFile> deletes() {
-    return ImmutableList.copyOf(deletes);
-  }
-
-  @Override
-  public Iterable<FileScanTask> split(long targetSplitSize) {
+  public Iterable<PositionDeletesScanTask> split(long targetSplitSize) {
     if (file().format().isSplittable()) {
       if (file().splitOffsets() != null) {
-        return () -> new BaseScanTask.OffsetsAwareTargetSplitSizeScanTaskIterator<>(file().splitOffsets(), this);
+        return () -> new OffsetsAwareTargetSplitSizeScanTaskIterator<>(file().splitOffsets(), this);
       } else {
-        return () -> new BaseScanTask.FixedSizeSplitScanTaskIterator<>(targetSplitSize, this);
+        return () -> new FixedSizeSplitScanTaskIterator<>(targetSplitSize, this);
       }
     }
     return ImmutableList.of(this);
@@ -56,8 +50,7 @@ public class BaseFileScanTask extends BaseScanTask<DataFile, FileScanTask> imple
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this)
-        .add("file", file().path())
-        .add("delete_files", Joiner.on(",").join(deletes))
+        .add("delete_file", file().path())
         .add("partition_data", file().partition())
         .add("residual", residual())
         .toString();
