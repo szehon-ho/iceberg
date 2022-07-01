@@ -19,21 +19,25 @@
 
 package org.apache.iceberg.spark.actions;
 
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.apache.iceberg.AllManifestsTable;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.DataFile;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.ManifestFiles;
 import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.ReachableFileUtil;
 import org.apache.iceberg.SerializableTable;
+import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.StaticTableOperations;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
@@ -51,10 +55,12 @@ import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.FlatMapFunction;
 import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.functions;
 import scala.Tuple2;
 
 import static org.apache.iceberg.MetadataTableType.ALL_MANIFESTS;
@@ -130,19 +136,46 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
     return new BaseTable(ops, metadataFileLocation);
   }
 
-  // builds a DF of delete and data file path and type by reading all manifests
-  protected Dataset<Row> buildValidContentFileWithTypeDF(Table table) {
-    return buildValidContentFileWithTypeDF(table, null);
+  /**
+   * Returns a dataset of reachable content file from a table.
+   * 1. List the table's reachable manifests
+   * 2. List each manifests' entries
+   * @param table table to explore
+   * @return a dataset of reachable content file, schema is a single column of file path
+   */
+  protected Dataset<Row> buildContentFileDF(Table table) {
+    return buildContentFilePathDF(table).select(FILE_PATH);
   }
 
-  // builds a DF of delete and data file path and type by reading all manifests
-  protected Dataset<Row> buildValidContentFileWithTypeDF(Table table, Set<Long> snapshotIds) {
+  /**
+   * Returns a dataset of reachable content file from a table.
+   * 1. List the table's reachable manifests
+   * 2. List each manifests' entries
+   * @param table table to explore
+   * @return a dataset of reachable content file, schema is content file path and content file type
+   */
+  protected Dataset<Row> buildContentFilePathDF(Table table) {
+    return buildContentFilePathDF(table, null, null);
+  }
+
+  /**
+   * Returns a dataset of reachable content file from a table.
+   * 1. List the table's reachable manifests
+   * 2. List each manifests' entries
+   * @param table table to explore
+   * @param snapshotsToExclude Exclusive filter of snapshot ids, will be skipped when listing manifests
+   * @param manifestsToExclude Exclusive filter of manifests, will be skipped when listing manifest entries
+   * @return a dataset of reachable content file, schema is content file path and content file type
+   */
+  protected Dataset<Row> buildContentFilePathDF(Table table, Set<Long> snapshotsToExclude, Dataset<Row> manifestsToExclude) {
     Broadcast<Table> tableBroadcast = sparkContext.broadcast(SerializableTable.copyOf(table));
 
     Dataset<Row> allManifests = loadMetadataTable(table, ALL_MANIFESTS);
-    if (snapshotIds != null) {
-      allManifests = allManifests.filter(
-          col(AllManifestsTable.REF_SNAPSHOT_ID.name()).isInCollection(snapshotIds));
+    if (snapshotsToExclude != null) {
+      allManifests = filterAllManifests(table, allManifests, snapshotsToExclude);
+    }
+    if (manifestsToExclude != null) {
+      allManifests = filterAllManifests(allManifests, manifestsToExclude);
     }
     Dataset<ManifestFileBean> allManifestsBean = allManifests.selectExpr(
             "content",
@@ -159,20 +192,29 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
         .toDF(FILE_PATH, FILE_TYPE);
   }
 
-  // builds a DF of delete and data file paths by reading all manifests
-  protected Dataset<Row> buildValidContentFileDF(Table table) {
-    return buildValidContentFileWithTypeDF(table).select(FILE_PATH);
-  }
-
+  /**
+   * Returns a dataset of reachable manifest files from table
+   * @param table table to explore
+   * @return a dataset of reachable manifest files, schema is a single row of manifest file path
+   */
   protected Dataset<Row> buildManifestFileDF(Table table) {
-    return buildManifestFileDF(table, null);
+    return buildManifestFileDF(table, null, null);
   }
 
-  protected Dataset<Row> buildManifestFileDF(Table table, Set<Long> snapshotIds) {
+  /**
+   * Returns a dataset of reachable manifest files from table
+   * @param table table to explore
+   * @param snapshotsToExclude Exclusive filter of snapshot ids, will be skipped when listing manifests
+   * @param manifestsToExclude Exclusive filter of manifests, will be skipped when listing manifest entries
+   * @return a dataset of reachable manifest files, schema is a single row of manifest file path
+   */
+  protected Dataset<Row> buildManifestFileDF(Table table, Set<Long> snapshotsToExclude, Dataset<Row> manifestsToExclude) {
     Dataset<Row> allManifests = loadMetadataTable(table, ALL_MANIFESTS);
-    if (snapshotIds != null) {
-      allManifests = allManifests.filter(col(AllManifestsTable.REF_SNAPSHOT_ID.name())
-          .isInCollection(snapshotIds));
+    if (snapshotsToExclude != null) {
+      allManifests = filterAllManifests(table, allManifests, snapshotsToExclude);
+    }
+    if (manifestsToExclude != null) {
+      allManifests = filterAllManifests(allManifests, manifestsToExclude);
     }
     return allManifests.select(col("path").as(FILE_PATH));
   }
@@ -251,5 +293,27 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
     static Tuple2<String, String> contentFileWithType(ContentFile<?> file) {
       return new Tuple2<>(file.path().toString(), file.content().toString());
     }
+  }
+
+  protected Dataset<Row> filterAllManifests(Table table, Dataset<Row> allManifestDF, Set<Long> excludedSnapshots) {
+    Set<Long> remainingSnapshots = ((HasTableOperations) table).operations().current().snapshots().stream()
+        .map(Snapshot::snapshotId)
+        .filter(id -> !excludedSnapshots.contains(id))
+        .collect(Collectors.toSet());
+
+    // In the case where one set is much bigger than the other, avoid sending huge collections to spark
+    if (excludedSnapshots.size() < remainingSnapshots.size()) {
+      return allManifestDF.filter(
+          functions.not(col(AllManifestsTable.REF_SNAPSHOT_ID.name()).isInCollection(excludedSnapshots)));
+    } else {
+      return allManifestDF.filter(
+          col(AllManifestsTable.REF_SNAPSHOT_ID.name()).isInCollection(remainingSnapshots));
+    }
+  }
+
+  protected Dataset<Row> filterAllManifests(Dataset<Row> allManifestDF, Dataset<Row> excludedManifests) {
+    return allManifestDF.join(excludedManifests,
+        allManifestDF.col("path").equalTo(excludedManifests.col("file_path")),
+        "left");
   }
 }

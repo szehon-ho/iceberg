@@ -208,7 +208,7 @@ public class BaseDeleteOrphanFilesSparkAction
   }
 
   private DeleteOrphanFiles.Result doExecute() {
-    Dataset<Row> validContentFileDF = buildValidContentFileDF(table);
+    Dataset<Row> validContentFileDF = buildContentFileDF(table);
     Dataset<Row> validMetadataFileDF = buildValidMetadataFileDF(table);
     Dataset<Row> validFileDF = validContentFileDF.union(validMetadataFileDF);
     Dataset<Row> actualFileDF = compareToFileList == null ? buildActualFileDF() : filteredCompareToFileList();

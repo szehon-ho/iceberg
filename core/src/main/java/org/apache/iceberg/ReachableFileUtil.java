@@ -19,6 +19,10 @@
 
 package org.apache.iceberg;
 
+import java.io.IOException;
+import java.io.PrintStream;
+import java.io.UncheckedIOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -28,6 +32,7 @@ import java.util.stream.StreamSupport;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.TableMetadata.MetadataLogEntry;
 import org.apache.iceberg.hadoop.Util;
+import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.slf4j.Logger;
@@ -114,18 +119,56 @@ public class ReachableFileUtil {
    * Returns locations of manifest lists in a table.
    *
    * @param table table for which manifestList needs to be fetched
-   * @param snapshotIds ids of snapshots for manifest list filter
+   * @param excludedSnapshotIds exclusive filter of snapshot ids, to be skipped when listing manifest lists.
    * @return the location of manifest Lists
    */
-  public static List<String> manifestListLocations(Table table, Set<Long> snapshotIds) {
+  public static List<String> manifestListLocations(Table table, Set<Long> excludedSnapshotIds) {
     Iterable<Snapshot> snapshots = table.snapshots();
     Stream<Snapshot> snapshotStream = StreamSupport.stream(snapshots.spliterator(), false);
-    if (snapshotIds != null) {
-      snapshotStream = snapshotStream.filter(s -> snapshotIds.contains(s.snapshotId()));
+    if (excludedSnapshotIds != null) {
+      snapshotStream = snapshotStream.filter(s -> !excludedSnapshotIds.contains(s.snapshotId()));
     }
     return snapshotStream
         .map(Snapshot::manifestListLocation)
         .filter(Objects::nonNull)
         .collect(Collectors.toList());
+  }
+
+  /**
+   * Emits a human-readable metadata graph of the given snapshot
+   * @param table Iceberg table
+   * @param snapshot Iceberg table snapshot
+   * @param out output print stream to emit to
+   */
+  public static void printSnapshot(Table table, Snapshot snapshot, PrintStream out) {
+    out.println(snapshot);
+    Iterator<ManifestFile> allManifests = snapshot.allManifests().iterator();
+    while (allManifests.hasNext()) {
+      ManifestFile mf = allManifests.next();
+      out.println(" \\---" + mf);
+
+      if (mf.content().equals(ManifestContent.DATA)) {
+        ManifestReader<DataFile> dataReader = ManifestFiles.read(mf, table.io(), table.specs());
+        try (CloseableIterator<ManifestEntry<DataFile>> dataEntries = dataReader.entries().iterator()) {
+          while (dataEntries.hasNext()) {
+            out.println("     +---" + dataEntries.next());
+            out.println();
+          }
+        } catch (IOException e) {
+          throw new UncheckedIOException(e);
+        }
+
+      } else if (mf.content().equals(ManifestContent.DELETES)) {
+        ManifestReader<DeleteFile> deleteReader = ManifestFiles.readDeleteManifest(mf, table.io(), table.specs());
+        try (CloseableIterator<ManifestEntry<DeleteFile>> deleteEntries = deleteReader.entries().iterator()) {
+          while (deleteEntries.hasNext()) {
+            out.println("     +---" + deleteEntries.next());
+            out.println();
+          }
+        } catch (IOException e) {
+          throw new UncheckedIOException(e);
+        }
+      }
+    }
   }
 }

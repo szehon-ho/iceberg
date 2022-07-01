@@ -169,16 +169,13 @@ public class BaseExpireSnapshotsSparkAction
       expireSnapshots.commit();
 
       TableMetadata updatedTable = ops.refresh();
-      Set<Long> updatedSnapshotIds = updatedTable.snapshots().stream()
+      Set<Long> validSnapshotIds = updatedTable.snapshots().stream()
           .map(Snapshot::snapshotId)
-          .collect(Collectors.toSet());
-      Set<Long> removedSnapshotIds = originalTable.snapshots().stream()
-          .map(Snapshot::snapshotId)
-          .filter(originalId -> !updatedSnapshotIds.contains(originalId))
           .collect(Collectors.toSet());
 
-      Dataset<Row> validFiles = buildValidFileDF(updatedTable);
-      Dataset<Row> deleteCandidateFiles = buildDeleteCandidateFileDF(originalTable, removedSnapshotIds);
+      Dataset<Row> validManifests = buildValidManifestDF(updatedTable);
+      Dataset<Row> validFiles = buildValidFileDF(updatedTable, validManifests);
+      Dataset<Row> deleteCandidateFiles = buildDeleteCandidateFileDF(originalTable, validSnapshotIds, validManifests);
 
       // determine expired files
       this.expiredFiles = deleteCandidateFiles.except(validFiles);
@@ -225,18 +222,24 @@ public class BaseExpireSnapshotsSparkAction
     }
   }
 
-  private Dataset<Row> buildValidFileDF(TableMetadata metadata) {
+  private Dataset<Row> buildValidManifestDF(TableMetadata metadata) {
     Table staticTable = newStaticTable(metadata, table.io());
-    return buildValidContentFileWithTypeDF(staticTable)
-        .union(withFileType(buildManifestFileDF(staticTable), MANIFEST))
+    return withFileType(buildManifestFileDF(staticTable), MANIFEST);
+  }
+
+  private Dataset<Row> buildValidFileDF(TableMetadata metadata, Dataset<Row> validManifests) {
+    Table staticTable = newStaticTable(metadata, table.io());
+    return buildContentFilePathDF(staticTable)
+        .union(validManifests)
         .union(withFileType(buildManifestListDF(staticTable), MANIFEST_LIST));
   }
 
-  private Dataset<Row> buildDeleteCandidateFileDF(TableMetadata metadata, Set<Long> snapshotIds) {
+  private Dataset<Row> buildDeleteCandidateFileDF(TableMetadata metadata, Set<Long> validSnapshotIds,
+                                                  Dataset<Row> validManifests) {
     Table staticTable = newStaticTable(metadata, table.io());
-    return buildValidContentFileWithTypeDF(staticTable)
-        .union(withFileType(buildManifestFileDF(staticTable, snapshotIds), MANIFEST))
-        .union(withFileType(buildManifestListDF(staticTable, snapshotIds), MANIFEST_LIST));
+    return buildContentFilePathDF(staticTable, validSnapshotIds, validManifests)
+        .union(withFileType(buildManifestFileDF(staticTable, validSnapshotIds, validManifests), MANIFEST))
+        .union(withFileType(buildManifestListDF(staticTable, validSnapshotIds), MANIFEST_LIST));
   }
 
   /**

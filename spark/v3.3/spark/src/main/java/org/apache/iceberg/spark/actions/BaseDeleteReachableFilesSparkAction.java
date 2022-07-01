@@ -125,7 +125,7 @@ public class BaseDeleteReachableFilesSparkAction
 
   private Dataset<Row> buildReachableFileDF(TableMetadata metadata) {
     Table staticTable = newStaticTable(metadata, io);
-    return withFileType(buildValidContentFileDF(staticTable), CONTENT_FILE)
+    return withFileType(buildContentFileDF(staticTable), CONTENT_FILE)
         .union(withFileType(buildManifestFileDF(staticTable), MANIFEST))
         .union(withFileType(buildManifestListDF(staticTable), MANIFEST_LIST))
         .union(withFileType(buildAllReachableOtherMetadataFileDF(staticTable), OTHERS));

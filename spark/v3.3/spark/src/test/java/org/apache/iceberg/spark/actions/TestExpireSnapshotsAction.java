@@ -21,12 +21,15 @@ package org.apache.iceberg.spark.actions;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.AssertHelpers;
 import org.apache.iceberg.BaseTable;
@@ -36,6 +39,7 @@ import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileMetadata;
 import org.apache.iceberg.ManifestFile;
 import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.ReachableFileUtil;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
@@ -51,10 +55,12 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.spark.data.TestHelpers;
 import org.apache.iceberg.spark.SparkTestBase;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.execution.ui.SQLAppStatusStore;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -1147,7 +1153,84 @@ public class TestExpireSnapshotsAction extends SparkTestBase {
       checkExpirationResults(1L, 0L, 0L, 1L, 2L, results);
 
       Assert.assertEquals("Expected total number of jobs with stream-results should match the expected number",
-          4L, jobsRunDuringStreamResults);
+          5L, jobsRunDuringStreamResults);
     });
+  }
+
+  @Test
+  public void testExpireFileDeletionMostExpired() {
+    testExpireFilesAreDeleted(10, 3);
+  }
+
+  @Test
+  public void testExpireFileDeletionMostRetained() {
+    testExpireFilesAreDeleted(3, 10);
+  }
+
+  @Test
+  public void testExpireFileDeletionBenchmark() {
+    testExpireFilesAreDeleted(0, 200);
+  }
+
+  public void testExpireFilesAreDeleted(int dataFilesExpired, int dataFilesRetained) {
+    // Add data files to be expired
+    Set<String> dataFiles = Sets.newHashSet();
+    for (int i = 0; i < dataFilesExpired; i++) {
+      DataFile df = DataFiles.builder(SPEC).
+          withPath(String.format("/path/to/data-expired-%d.parquet", i))
+          .withFileSizeInBytes(10)
+          .withPartitionPath("c1=1")
+          .withRecordCount(1)
+          .build();
+      dataFiles.add(df.path().toString());
+      table.newFastAppend()
+          .appendFile(df)
+          .commit();
+    }
+
+    // Delete them all, these will be deleted on expire snapshot
+    table.newDelete()
+        .deleteFromRowFilter(Expressions.alwaysTrue())
+        .commit();
+    // Clears "DELETED" manifests
+    table.newDelete()
+        .deleteFromRowFilter(Expressions.alwaysTrue())
+        .commit();
+
+    Set<String> manifestsBefore = TestHelpers.reachableManifestPaths(table);
+
+    // Add data files to be retained, which are not deleted.
+    for (int i = 0; i < dataFilesRetained; i++) {
+      DataFile df = DataFiles.builder(SPEC).
+          withPath(String.format("/path/to/data-retained-%d.parquet", i))
+          .withFileSizeInBytes(10)
+          .withPartitionPath("c1=1")
+          .withRecordCount(1)
+          .build();
+      table.newFastAppend()
+          .appendFile(df)
+          .commit();
+    }
+
+    Set<String> expectedDeletes = Sets.newHashSet();
+    expectedDeletes.addAll(ReachableFileUtil.manifestListLocations(table));
+    // all snapshot manifest lists except current will be deleted
+    expectedDeletes.remove(table.currentSnapshot().manifestListLocation());
+    expectedDeletes.addAll(manifestsBefore); // new manifests are reachable from current snapshot and not deleted
+    expectedDeletes.addAll(dataFiles); //new data files are reacahble from current snapshot and not deleted
+
+    long end = rightAfterSnapshot();
+    Set<String> deletedFiles = Sets.newHashSet();
+    long before = System.currentTimeMillis();
+    SparkActions.get().expireSnapshots(table)
+        .expireOlderThan(end)
+        .deleteWith(deletedFiles::add)
+        .execute();
+    long taken = (System.currentTimeMillis() - before);
+    System.out.println("Expire took" + taken);
+
+    SQLAppStatusStore sqlAppStatusStore = spark.sharedState().statusStore();
+
+    Assert.assertEquals("All reachable files before expiration should be deleted", expectedDeletes, deletedFiles);
   }
 }
