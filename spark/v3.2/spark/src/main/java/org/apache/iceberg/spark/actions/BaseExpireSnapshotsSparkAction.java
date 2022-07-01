@@ -28,7 +28,6 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.apache.iceberg.FileContent;
 import org.apache.iceberg.HasTableOperations;
-import org.apache.iceberg.SerializableTable;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
@@ -44,8 +43,6 @@ import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.spark.JobGroupInfo;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
-import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -181,10 +178,10 @@ public class BaseExpireSnapshotsSparkAction
           .collect(Collectors.toSet());
 
       Dataset<Row> validFiles = buildValidFileDF(updatedTable);
-      Dataset<Row> expiredSnapshotFiles = buildFilteredFileDF(originalTable, removedSnapshotIds);
+      Dataset<Row> deleteCandidateFileDF = buildDeleteCandidateFileDF(originalTable, removedSnapshotIds);
 
       // determine expired files
-      this.expiredFiles = expiredSnapshotFiles.except(validFiles);
+      this.expiredFiles = deleteCandidateFileDF.except(validFiles);
     }
 
     return expiredFiles;
@@ -233,6 +230,13 @@ public class BaseExpireSnapshotsSparkAction
     return buildValidContentFileWithTypeDF(staticTable)
         .union(withFileType(buildManifestFileDF(staticTable), MANIFEST))
         .union(withFileType(buildManifestListDF(staticTable), MANIFEST_LIST));
+  }
+
+  private Dataset<Row> buildDeleteCandidateFileDF(TableMetadata metadata, Set<Long> snapshotIds) {
+    Table staticTable = newStaticTable(metadata, table.io());
+    return buildValidContentFileWithTypeDF(staticTable)
+        .union(withFileType(buildManifestFileDF(staticTable, snapshotIds), MANIFEST))
+        .union(withFileType(buildManifestListDF(staticTable, snapshotIds), MANIFEST_LIST));
   }
 
   /**
@@ -286,16 +290,5 @@ public class BaseExpireSnapshotsSparkAction
 
     return new BaseExpireSnapshotsActionResult(dataFileCount.get(), posDeleteFileCount.get(),
         eqDeleteFileCount.get(), manifestCount.get(), manifestListCount.get());
-  }
-
-  private Dataset<Row> buildFilteredFileDF(TableMetadata metadata, Set<Long> snapshotIds) {
-    Table staticTable = newStaticTable(metadata, this.table.io());
-    JavaSparkContext context = JavaSparkContext.fromSparkContext(spark().sparkContext());
-    Broadcast<Table> tableBroadcast = context.broadcast(SerializableTable.copyOf(table));
-    Dataset<ManifestFileBean> manifestFiles = buildFilteredManifestFileBeanDF(staticTable, snapshotIds, tableBroadcast);
-
-    return withFileType(buildFilteredDataFileDF(manifestFiles, tableBroadcast), CONTENT_FILE)
-        .union(withFileType(buildFilteredManifestFileDF(manifestFiles), MANIFEST))
-        .union(withFileType(buildFilteredManifestListDF(staticTable, snapshotIds), MANIFEST_LIST));
   }
 }

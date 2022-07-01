@@ -25,22 +25,18 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
+import org.apache.iceberg.AllManifestsTable;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.DataFile;
-import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.ManifestFiles;
-import org.apache.iceberg.ManifestLists;
 import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.ReachableFileUtil;
 import org.apache.iceberg.SerializableTable;
-import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.StaticTableOperations;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
-import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.actions.Action;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.io.ClosingIterator;
@@ -136,10 +132,19 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
 
   // builds a DF of delete and data file path and type by reading all manifests
   protected Dataset<Row> buildValidContentFileWithTypeDF(Table table) {
+    return buildValidContentFileWithTypeDF(table, null);
+  }
+
+  // builds a DF of delete and data file path and type by reading all manifests
+  protected Dataset<Row> buildValidContentFileWithTypeDF(Table table, Set<Long> snapshotIds) {
     Broadcast<Table> tableBroadcast = sparkContext.broadcast(SerializableTable.copyOf(table));
 
-    Dataset<ManifestFileBean> allManifests = loadMetadataTable(table, ALL_MANIFESTS)
-        .selectExpr(
+    Dataset<Row> allManifests = loadMetadataTable(table, ALL_MANIFESTS);
+    if (snapshotIds != null) {
+      allManifests = allManifests.filter(
+          col(AllManifestsTable.REF_SNAPSHOT_ID.name()).isInCollection(snapshotIds));
+    }
+    Dataset<ManifestFileBean> allManifestsBean = allManifests.selectExpr(
             "content",
             "path",
             "length",
@@ -149,7 +154,7 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
         .repartition(spark.sessionState().conf().numShufflePartitions()) // avoid adaptive execution combining tasks
         .as(Encoders.bean(ManifestFileBean.class));
 
-    return allManifests
+    return allManifestsBean
         .flatMap(new ReadManifest(tableBroadcast), Encoders.tuple(Encoders.STRING(), Encoders.STRING()))
         .toDF(FILE_PATH, FILE_TYPE);
   }
@@ -160,11 +165,23 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
   }
 
   protected Dataset<Row> buildManifestFileDF(Table table) {
-    return loadMetadataTable(table, ALL_MANIFESTS).select(col("path").as(FILE_PATH));
+    return buildManifestFileDF(table, null);
+  }
+
+  protected Dataset<Row> buildManifestFileDF(Table table, Set<Long> snapshotIds) {
+    Dataset<Row> allManifests = loadMetadataTable(table, ALL_MANIFESTS);
+    if (snapshotIds != null) {
+      allManifests = allManifests.filter(col(AllManifestsTable.REF_SNAPSHOT_ID.name()).isInCollection(snapshotIds));
+    }
+    return allManifests.select(col("path").as(FILE_PATH));
   }
 
   protected Dataset<Row> buildManifestListDF(Table table) {
-    List<String> manifestLists = ReachableFileUtil.manifestListLocations(table);
+    return buildManifestListDF(table, null);
+  }
+
+  protected Dataset<Row> buildManifestListDF(Table table, Set<Long> snapshotIds) {
+    List<String> manifestLists = ReachableFileUtil.manifestListLocations(table, snapshotIds);
     return spark.createDataset(manifestLists, Encoders.STRING()).toDF(FILE_PATH);
   }
 
@@ -193,45 +210,6 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
 
   protected Dataset<Row> withFileType(Dataset<Row> ds, String type) {
     return ds.withColumn(FILE_TYPE, lit(type));
-  }
-
-  protected Dataset<Row> buildFilteredDataFileDF(Dataset<ManifestFileBean> manifestFileDs,
-                                                 Broadcast<Table> tableBroadcast) {
-    return manifestFileDs.repartition(spark.sessionState().conf().numShufflePartitions())
-        .flatMap(new ReadManifest(tableBroadcast), Encoders.tuple(Encoders.STRING(), Encoders.STRING()))
-        .toDF(FILE_PATH, FILE_TYPE);
-  }
-
-  protected Dataset<Row> buildFilteredManifestFileDF(Dataset<ManifestFileBean> manifestFileDs) {
-    return manifestFileDs.selectExpr("path as file_path");
-  }
-
-  protected Dataset<ManifestFileBean> buildFilteredManifestFileBeanDF(Table table, Set<Long> snapshotIds,
-                                                                      Broadcast<Table> tableBroadcast) {
-    TableOperations ops = ((HasTableOperations) table).operations();
-
-    // Filter out snapshot by ids
-    List<Snapshot> snapshots = ops.current().snapshots().stream()
-        .filter(s -> snapshotIds.contains(s.snapshotId()))
-        .collect(Collectors.toList());
-
-    // Case: Manifest-list file written, can parallelize the read
-    List<String> toRead = snapshots.stream()
-        .filter(s -> s.manifestListLocation() != null)
-        .map(Snapshot::manifestListLocation).collect(Collectors.toList());
-    Dataset<ManifestFileBean> result = spark.createDataset(toRead, Encoders.STRING()).flatMap(
-        new ReadManifestList(tableBroadcast), Encoders.bean(ManifestFileBean.class));
-
-    // Case: Manifest-list file not written, snapshot should have been loaded already with all manifest file information
-    List<ManifestFileBean> loaded = snapshots.stream().filter(s -> s.manifestListLocation() == null).flatMap(
-        s -> s.allManifests().stream()).map(ManifestFileBean::from).collect(Collectors.toList());
-    return spark.createDataset(loaded, Encoders.bean(ManifestFileBean.class)).union(result)
-        .dropDuplicates("path");
-  }
-
-  protected Dataset<Row> buildFilteredManifestListDF(Table table, Set<Long> snapshotIds) {
-    List<String> manifestLists = ReachableFileUtil.manifestListLocations(table, snapshotIds);
-    return spark.createDataset(manifestLists, Encoders.STRING()).toDF("file_path");
   }
 
   protected Dataset<Row> loadMetadataTable(Table table, MetadataTableType type) {
@@ -271,20 +249,6 @@ abstract class BaseSparkAction<ThisT, R> implements Action<ThisT, R> {
 
     static Tuple2<String, String> contentFileWithType(ContentFile<?> file) {
       return new Tuple2<>(file.path().toString(), file.content().toString());
-    }
-  }
-
-  private static class ReadManifestList implements FlatMapFunction<String, ManifestFileBean> {
-    private final Broadcast<Table> table;
-
-    ReadManifestList(Broadcast<Table> table) {
-      this.table = table;
-    }
-
-    @Override
-    public Iterator<ManifestFileBean> call(String manifestList) {
-      return ManifestLists.read(table.value().io().newInputFile(manifestList)).stream()
-          .map(ManifestFileBean::from).iterator();
     }
   }
 }

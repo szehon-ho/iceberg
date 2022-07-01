@@ -52,7 +52,9 @@ import org.apache.iceberg.util.StructProjection;
  * This table may return duplicate rows.
  */
 public class AllManifestsTable extends BaseMetadataTable {
-  private static final int REF_SNAPSHOT_ID = 18;
+  public static final Types.NestedField REF_SNAPSHOT_ID =
+      Types.NestedField.required(18, "reference_snapshot_id", Types.LongType.get());
+
   private static final Schema MANIFEST_FILE_SCHEMA = new Schema(
       Types.NestedField.required(14, "content", Types.IntegerType.get()),
       Types.NestedField.required(1, "path", Types.StringType.get()),
@@ -71,7 +73,7 @@ public class AllManifestsTable extends BaseMetadataTable {
           Types.NestedField.optional(12, "lower_bound", Types.StringType.get()),
           Types.NestedField.optional(13, "upper_bound", Types.StringType.get())
       ))),
-      Types.NestedField.required(REF_SNAPSHOT_ID, "reference_snapshot_id", Types.LongType.get())
+      REF_SNAPSHOT_ID
   );
 
   AllManifestsTable(TableOperations ops, Table table) {
@@ -402,7 +404,7 @@ public class AllManifestsTable extends BaseMetadataTable {
       }
 
       private <T> boolean isSnapshotRef(BoundReference<T> ref) {
-        return ref.fieldId() == REF_SNAPSHOT_ID;
+        return ref.fieldId() == REF_SNAPSHOT_ID.fieldId();
       }
     }
   }

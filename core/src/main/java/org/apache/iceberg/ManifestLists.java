@@ -29,11 +29,11 @@ import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 
-public class ManifestLists {
+class ManifestLists {
   private ManifestLists() {
   }
 
-  public static List<ManifestFile> read(InputFile manifestList) {
+  static List<ManifestFile> read(InputFile manifestList) {
     try (CloseableIterable<ManifestFile> files = Avro.read(manifestList)
         .rename("manifest_file", GenericManifestFile.class.getName())
         .rename("partitions", GenericPartitionFieldSummary.class.getName())

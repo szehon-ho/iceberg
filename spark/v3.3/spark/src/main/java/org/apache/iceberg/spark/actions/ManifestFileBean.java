@@ -31,15 +31,6 @@ public class ManifestFileBean implements ManifestFile {
   private Long addedSnapshotId = null;
   private Integer content = null;
 
-  public static ManifestFileBean from(ManifestFile file) {
-    ManifestFileBean result = new ManifestFileBean();
-    result.setAddedSnapshotId(file.snapshotId());
-    result.setLength(file.length());
-    result.setPartitionSpecId(file.partitionSpecId());
-    result.setPath(file.path());
-    return result;
-  }
-
   public String getPath() {
     return path;
   }
