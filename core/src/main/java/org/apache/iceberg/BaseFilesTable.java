@@ -20,7 +20,11 @@ package org.apache.iceberg;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.ManifestEvaluator;
@@ -28,10 +32,13 @@ import org.apache.iceberg.expressions.ResidualEvaluator;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
+import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
+import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.TypeUtil;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.StructType;
 
 /** Base class logic for files metadata tables */
@@ -48,10 +55,10 @@ abstract class BaseFilesTable extends BaseMetadataTable {
     if (partitionType.fields().size() < 1) {
       // avoid returning an empty struct, which is not always supported. instead, drop the partition
       // field
-      return TypeUtil.selectNot(schema, Sets.newHashSet(DataFile.PARTITION_ID));
-    } else {
-      return schema;
+      schema = TypeUtil.selectNot(schema, Sets.newHashSet(DataFile.PARTITION_ID));
     }
+
+    return TypeUtil.join(schema, MetricsUtil.METRICS_DISPLAY_SCHEMA);
   }
 
   private static CloseableIterable<FileScanTask> planFiles(
@@ -86,7 +93,13 @@ abstract class BaseFilesTable extends BaseMetadataTable {
         filteredManifests,
         manifest ->
             new ManifestReadTask(
-                table, manifest, projectedSchema, schemaString, specString, residuals));
+                table,
+                manifest,
+                tableSchema,
+                projectedSchema,
+                schemaString,
+                specString,
+                residuals));
   }
 
   abstract static class BaseFilesTableScan extends BaseMetadataTableScan {
@@ -143,12 +156,17 @@ abstract class BaseFilesTable extends BaseMetadataTable {
     private final FileIO io;
     private final Map<Integer, PartitionSpec> specsById;
     private final ManifestFile manifest;
-    private final Schema schema;
+    private final Schema dataTableSchema;
+    private final Schema filesTableSchema;
+    private final Schema projectedSchema;
+    private final Map<Integer, String> quotedNameById;
+    private final boolean isPartitioned;
 
     ManifestReadTask(
         Table table,
         ManifestFile manifest,
         Schema schema,
+        Schema projectedSchema,
         String schemaString,
         String specString,
         ResidualEvaluator residuals) {
@@ -156,20 +174,32 @@ abstract class BaseFilesTable extends BaseMetadataTable {
       this.io = table.io();
       this.specsById = Maps.newHashMap(table.specs());
       this.manifest = manifest;
-      this.schema = schema;
+      this.filesTableSchema = schema;
+      this.projectedSchema = projectedSchema;
+      this.dataTableSchema = table.schema();
+      this.quotedNameById = TypeUtil.indexQuotedNameById(table.schema().asStruct(), name -> name);
+      this.isPartitioned = Partitioning.partitionType(table).fields().size() > 0;
     }
 
     @Override
     public CloseableIterable<StructLike> rows() {
-      return CloseableIterable.transform(manifestEntries(), file -> (StructLike) file);
+      return CloseableIterable.transform(
+          manifestEntries(),
+          fileEntry ->
+              StaticDataTask.Row.of(
+                  projectedFields(fileEntry, accessors(isPartitioned)).toArray()));
     }
 
     private CloseableIterable<? extends ContentFile<?>> manifestEntries() {
+      Schema finalProjectedSchema =
+          TypeUtil.selectNot(
+              filesTableSchema, TypeUtil.getProjectedIds(MetricsUtil.METRICS_DISPLAY_SCHEMA));
       switch (manifest.content()) {
         case DATA:
-          return ManifestFiles.read(manifest, io, specsById).project(schema);
+          return ManifestFiles.read(manifest, io, specsById).project(finalProjectedSchema);
         case DELETES:
-          return ManifestFiles.readDeleteManifest(manifest, io, specsById).project(schema);
+          return ManifestFiles.readDeleteManifest(manifest, io, specsById)
+              .project(finalProjectedSchema);
         default:
           throw new IllegalArgumentException(
               "Unsupported manifest content type:" + manifest.content());
@@ -184,6 +214,61 @@ abstract class BaseFilesTable extends BaseMetadataTable {
     @VisibleForTesting
     ManifestFile manifest() {
       return manifest;
+    }
+
+    private List<Function<ContentFile<?>, Object>> accessors(boolean partitioned) {
+      List<Function<ContentFile<?>, Object>> accessors =
+          Lists.newArrayList(
+              file -> file.content().id(),
+              ContentFile::path,
+              file -> file.format().toString(),
+              ContentFile::specId,
+              ContentFile::partition,
+              ContentFile::recordCount,
+              ContentFile::fileSizeInBytes,
+              ContentFile::columnSizes,
+              ContentFile::valueCounts,
+              ContentFile::nullValueCounts,
+              ContentFile::nanValueCounts,
+              ContentFile::lowerBounds,
+              ContentFile::upperBounds,
+              ContentFile::keyMetadata,
+              ContentFile::splitOffsets,
+              ContentFile::equalityFieldIds,
+              ContentFile::sortOrderId,
+              file -> MetricsUtil.readableCountsMetrics(file.columnSizes(), quotedNameById),
+              file -> MetricsUtil.readableCountsMetrics(file.valueCounts(), quotedNameById),
+              file -> MetricsUtil.readableCountsMetrics(file.nullValueCounts(), quotedNameById),
+              file -> MetricsUtil.readableCountsMetrics(file.nanValueCounts(), quotedNameById),
+              file ->
+                  MetricsUtil.readableBoundsMetrics(
+                      file.lowerBounds(), quotedNameById, dataTableSchema),
+              file ->
+                  MetricsUtil.readableBoundsMetrics(
+                      file.upperBounds(), quotedNameById, dataTableSchema));
+      return partitioned
+          ? accessors
+          : Stream.concat(
+                  accessors.subList(0, 4).stream(), accessors.subList(5, accessors.size()).stream())
+              .collect(Collectors.toList());
+    }
+
+    private List<Object> projectedFields(
+        ContentFile<?> file, List<Function<ContentFile<?>, Object>> accessors) {
+      Preconditions.checkArgument(
+          accessors.size() == filesTableSchema.columns().size(),
+          "There must be an accessor provided for every field in files metadata table, required %s but found %s",
+          filesTableSchema.columns().size(),
+          accessors.size());
+      List<Object> result = Lists.newArrayList();
+      int fieldIndex = 0;
+      for (Types.NestedField field : filesTableSchema.columns()) {
+        if (projectedSchema.findColumnName(field.fieldId()) != null) {
+          result.add(accessors.get(fieldIndex).apply(file));
+        }
+        fieldIndex++;
+      }
+      return result;
     }
   }
 }
