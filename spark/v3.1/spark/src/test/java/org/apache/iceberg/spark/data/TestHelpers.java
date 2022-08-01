@@ -39,10 +39,16 @@ import java.util.UUID;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericData.Record;
+import org.apache.iceberg.FileContent;
+import org.apache.iceberg.MetricsUtil;
+import org.apache.iceberg.Partitioning;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Table;
+import org.apache.iceberg.avro.AvroSchemaUtil;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.data.vectorized.IcebergArrowColumnVector;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.apache.orc.storage.serde2.io.DateWritable;
 import org.apache.spark.sql.Row;
@@ -766,5 +772,83 @@ public class TestHelpers {
           expectedValues.isNullAt(i) ? null : expectedValues.get(i, valueType),
           actualValues.isNullAt(i) ? null : actualValues.get(i, valueType));
     }
+  }
+
+  public static void asMetadataRecord(GenericData.Record file) {
+    file.put(0, FileContent.DATA.id());
+    file.put(3, 0); // specId
+  }
+
+  @SuppressWarnings("unchecked")
+  public static GenericData.Record asMetadataRecordWithMetrics(
+      Table dataTable, GenericData.Record file) {
+    Schema icebergSchema =
+        TypeUtil.join(
+            AvroSchemaUtil.toIceberg(file.getSchema()), MetricsUtil.METRICS_DISPLAY_SCHEMA);
+    GenericData.Record record =
+        new GenericData.Record(AvroSchemaUtil.convert(icebergSchema, "dummy"));
+    Map<Integer, String> quotedNameById =
+        TypeUtil.indexQuotedNameById(dataTable.schema().asStruct(), name -> name);
+    boolean isPartitioned = Partitioning.partitionType(dataTable).fields().size() != 0;
+    int filesFields = isPartitioned ? 17 : 16;
+    for (int i = 0; i < filesFields; i++) {
+      if (i == 0) {
+        record.put(0, FileContent.DATA.id());
+      } else if (i == 3) {
+        record.put(3, 0); // spec id
+      } else {
+        record.put(i, file.get(i));
+      }
+    }
+    setExpectedFilesPosition(
+        record,
+        17,
+        isPartitioned,
+        MetricsUtil.readableCountsMetrics(
+            filesFieldPosition(file, 7, isPartitioned), quotedNameById));
+    setExpectedFilesPosition(
+        record,
+        18,
+        isPartitioned,
+        MetricsUtil.readableCountsMetrics(
+            filesFieldPosition(file, 8, isPartitioned), quotedNameById));
+    setExpectedFilesPosition(
+        record,
+        19,
+        isPartitioned,
+        MetricsUtil.readableCountsMetrics(
+            filesFieldPosition(file, 9, isPartitioned), quotedNameById));
+    setExpectedFilesPosition(
+        record,
+        20,
+        isPartitioned,
+        MetricsUtil.readableCountsMetrics(
+            filesFieldPosition(file, 10, isPartitioned), quotedNameById));
+    setExpectedFilesPosition(
+        record,
+        21,
+        isPartitioned,
+        MetricsUtil.readableBoundsMetrics(
+            filesFieldPosition(file, 11, isPartitioned), quotedNameById, dataTable.schema()));
+    setExpectedFilesPosition(
+        record,
+        22,
+        isPartitioned,
+        MetricsUtil.readableBoundsMetrics(
+            filesFieldPosition(file, 12, isPartitioned), quotedNameById, dataTable.schema()));
+    return record;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <K, V> Map<K, V> filesFieldPosition(
+      GenericData.Record file, int position, boolean isPartitioned) {
+    int finalPosition = isPartitioned ? position : position - 1;
+    return (Map<K, V>) file.get(finalPosition);
+  }
+
+  private static void setExpectedFilesPosition(
+      GenericData.Record file, int position, boolean isPartitioned, Map<?, ?> value) {
+    int finalPosition = isPartitioned ? position : position - 1;
+    file.put(finalPosition, value);
   }
 }

@@ -36,7 +36,6 @@ import org.apache.avro.generic.GenericRecordBuilder;
 import org.apache.iceberg.AssertHelpers;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
-import org.apache.iceberg.FileContent;
 import org.apache.iceberg.ManifestFile;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
@@ -172,7 +171,7 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
           row -> {
             row.put(2, 0L);
             GenericData.Record file = (GenericData.Record) row.get("data_file");
-            asMetadataRecord(file);
+            TestHelpers.asMetadataRecord(file);
             expected.add(row);
           });
     }
@@ -365,7 +364,7 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
             row -> {
               row.put(2, 0L);
               GenericData.Record file = (GenericData.Record) row.get("data_file");
-              asMetadataRecord(file);
+              TestHelpers.asMetadataRecord(file);
               expected.add(row);
             });
       }
@@ -450,8 +449,9 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
         for (GenericData.Record record : rows) {
           if ((Integer) record.get("status") < 2 /* added or existing */) {
             GenericData.Record file = (GenericData.Record) record.get("data_file");
-            asMetadataRecord(file);
-            expected.add(file);
+            GenericData.Record expectedRecord =
+                TestHelpers.asMetadataRecordWithMetrics(table, file);
+            expected.add(expectedRecord);
           }
         }
       }
@@ -506,8 +506,9 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
             Avro.read(in).project(entriesTable.schema()).build()) {
           for (GenericData.Record record : rows) {
             GenericData.Record file = (GenericData.Record) record.get("data_file");
-            asMetadataRecord(file);
-            expected.add(file);
+            GenericData.Record expectedRecord =
+                TestHelpers.asMetadataRecordWithMetrics(table, file);
+            expected.add(expectedRecord);
           }
         }
       }
@@ -616,8 +617,9 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
         for (GenericData.Record record : rows) {
           if ((Integer) record.get("status") < 2 /* added or existing */) {
             GenericData.Record file = (GenericData.Record) record.get("data_file");
-            asMetadataRecord(file);
-            expected.add(file);
+            GenericData.Record expectedRecord =
+                TestHelpers.asMetadataRecordWithMetrics(table, file);
+            expected.add(expectedRecord);
           }
         }
       }
@@ -734,8 +736,9 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
         for (GenericData.Record record : rows) {
           if ((Integer) record.get("status") < 2 /* added or existing */) {
             GenericData.Record file = (GenericData.Record) record.get("data_file");
-            asMetadataRecord(file);
-            expected.add(file);
+            GenericData.Record expectedRecord =
+                TestHelpers.asMetadataRecordWithMetrics(table, file);
+            expected.add(expectedRecord);
           }
         }
       }
@@ -1785,11 +1788,6 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
                         .build()))
         .set("reference_snapshot_id", referenceSnapshotId)
         .build();
-  }
-
-  private void asMetadataRecord(GenericData.Record file) {
-    file.put(0, FileContent.DATA.id());
-    file.put(3, 0); // specId
   }
 
   private PositionDeleteWriter<InternalRow> newPositionDeleteWriter(
