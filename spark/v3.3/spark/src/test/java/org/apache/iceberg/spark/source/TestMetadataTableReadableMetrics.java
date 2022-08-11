@@ -56,9 +56,10 @@ import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import scala.Option;
 import scala.collection.JavaConverters;
 
-public class TestMetadataTableMetricsColumns extends SparkTestBase {
+public class TestMetadataTableReadableMetrics extends SparkTestBase {
 
   @Rule public TemporaryFolder temp = new TemporaryFolder();
 
@@ -195,30 +196,30 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
           "fixedCol",
           "binaryCol"
         };
-    checkCountColumn(
+    checkMetric(
         row,
-        "column_sizes_metrics",
+        "column_size",
         primitiveColumns,
         l -> Assert.assertTrue("Column size should be greater than 0", l > 0));
-    checkCountColumn(
+    checkMetric(
         row,
-        "value_counts_metrics",
+        "value_count",
         primitiveColumns,
         l -> Assert.assertEquals("Value count should be 2", l.longValue(), 2L));
-    checkCountColumn(
+    checkMetric(
         row,
-        "null_value_counts_metrics",
+        "null_value_count",
         primitiveColumns,
         l -> Assert.assertEquals("Null value count should be 0", l.longValue(), 0L));
-    checkCountColumn(
+    checkMetric(
         row,
-        "nan_value_counts_metrics",
+        "nan_value_count",
         new String[] {"floatCol", "doubleCol"},
         l -> Assert.assertEquals("Nan value count should be 0", l.longValue(), 0L));
 
-    checkBoundColumn(
+    checkMetricValues(
         row,
-        "lower_bounds_metrics",
+        "lower_bound",
         ImmutableMap.ofEntries(
             Maps.immutableEntry("booleanCol", "false"),
             Maps.immutableEntry("stringCol", "1"),
@@ -233,9 +234,9 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
             Maps.immutableEntry("timeCol", "00:00:00.000001"),
             Maps.immutableEntry("timestampCol", "1970-01-01T00:00:00.000001")));
 
-    checkBoundColumn(
+    checkMetricValues(
         row,
-        "upper_bounds_metrics",
+        "upper_bound",
         ImmutableMap.ofEntries(
             Maps.immutableEntry("booleanCol", "true"),
             Maps.immutableEntry("stringCol", "2"),
@@ -294,12 +295,7 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
             .read()
             .format("iceberg")
             .load("default." + tableName + ".files")
-            .select(
-                new Column("file_path"),
-                functions.map_keys(new Column("value_counts_metrics")),
-                functions.map_values(new Column("value_counts_metrics")),
-                functions.map_keys(new Column("upper_bounds_metrics")),
-                functions.map_values(new Column("upper_bounds_metrics")));
+            .select(new Column("file_path"), functions.map_keys(new Column("readable_metrics")));
 
     List<Row> rows = df.collectAsList();
     Assert.assertEquals("Expected only one data file", 1, rows.size());
@@ -318,27 +314,7 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
             "timestampCol",
             "fixedCol",
             "binaryCol");
-    checkCollectionValues(row, "map_keys(value_counts_metrics)", expectedKeys);
-    checkCollectionValues(row, "map_keys(upper_bounds_metrics)", expectedKeys);
-
-    Set<Long> expectedCounts = ImmutableSet.of(2L, 2L, 2L, 2L, 2L, 2L, 2L, 2L, 2L, 2L, 2L, 2L);
-    checkCollectionValues(row, "map_values(value_counts_metrics)", expectedCounts);
-
-    Set<String> expectedUpperBounds =
-        ImmutableSet.of(
-            "true",
-            "2",
-            "2",
-            "2",
-            "0.0",
-            "2.0",
-            "2.00",
-            "2222",
-            "2222",
-            "1970-01-03",
-            "00:00:00.000002",
-            "1970-01-01T00:00:00.000002");
-    checkCollectionValues(row, "map_values(upper_bounds_metrics)", expectedUpperBounds);
+    checkCollectionValues(row, "map_keys(readable_metrics)", expectedKeys);
   }
 
   @Test
@@ -374,9 +350,9 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
     Assert.assertEquals("Expected only one data file", 1, rows.size());
     Row row = rows.get(0);
 
-    checkCountColumn(
+    checkMetricValues(
         row,
-        "null_value_counts_metrics",
+        "null_value_count",
         ImmutableMap.ofEntries(
             Maps.immutableEntry("booleanCol", 0L),
             Maps.immutableEntry("stringCol", 0L),
@@ -391,11 +367,21 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
             Maps.immutableEntry("timeCol", 2L),
             Maps.immutableEntry("timestampCol", 2L)));
 
-    checkCountColumn(
-        row,
-        "nan_value_counts_metrics",
-        ImmutableMap.ofEntries(
-            Maps.immutableEntry("floatCol", 2L), Maps.immutableEntry("doubleCol", 1L)));
+    Map<String, Long> expectedNanValues = Maps.newHashMap();
+    expectedNanValues.put("booleanCol", null);
+    expectedNanValues.put("stringCol", null);
+    expectedNanValues.put("intCol", null);
+    expectedNanValues.put("longCol", null);
+    expectedNanValues.put("floatCol", 2L);
+    expectedNanValues.put("doubleCol", 1L);
+    expectedNanValues.put("decimalCol", null);
+    expectedNanValues.put("binaryCol", null);
+    expectedNanValues.put("fixedCol", null);
+    expectedNanValues.put("dateCol", null);
+    expectedNanValues.put("timeCol", null);
+    expectedNanValues.put("timestampCol", null);
+
+    checkMetricValues(row, "nan_value_count", expectedNanValues);
   }
 
   @Test
@@ -419,38 +405,38 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
 
     String[] nestedColumns =
         new String[] {
-          "nestedStructCol.leafStructCol.leafDoubleCol",
-          "nestedStructCol.leafStructCol.leafDoubleCol"
+          "nestedStructCol.leafStructCol.leafDoubleCol", "nestedStructCol.leafStructCol.leafLongCol"
         };
-    checkCountColumn(
+    checkMetric(
         row,
-        "column_sizes_metrics",
+        "column_size",
         nestedColumns,
         l -> Assert.assertTrue("Column size should be greater than 0", l > 0));
-    checkCountColumn(
+    checkMetric(
         row,
-        "value_counts_metrics",
+        "value_count",
         nestedColumns,
         l -> Assert.assertEquals("Value count should be 3", l.longValue(), 3L));
-    checkCountColumn(
+    checkMetric(
         row,
-        "null_value_counts_metrics",
+        "null_value_count",
         nestedColumns,
         l -> Assert.assertEquals("Null value count should be 1", l.longValue(), 1L));
-    checkCountColumn(
-        row,
-        "nan_value_counts_metrics",
-        ImmutableMap.of("nestedStructCol.leafStructCol.leafDoubleCol", 1L));
 
-    checkBoundColumn(
+    Map<String, Long> expectedNanValues = Maps.newHashMap();
+    expectedNanValues.put("nestedStructCol.leafStructCol.leafDoubleCol", 1L);
+    expectedNanValues.put("nestedStructCol.leafStructCol.leafLongCol", null);
+    checkMetricValues(row, "nan_value_count", expectedNanValues);
+
+    checkMetricValues(
         row,
-        "lower_bounds_metrics",
+        "lower_bound",
         ImmutableMap.of(
             "nestedStructCol.leafStructCol.leafLongCol", "0",
             "nestedStructCol.leafStructCol.leafDoubleCol", "0.0"));
-    checkBoundColumn(
+    checkMetricValues(
         row,
-        "upper_bounds_metrics",
+        "upper_bound",
         ImmutableMap.of(
             "nestedStructCol.leafStructCol.leafLongCol", "1",
             "nestedStructCol.leafStructCol.leafDoubleCol", "0.0"));
@@ -462,21 +448,27 @@ public class TestMetadataTableMetricsColumns extends SparkTestBase {
     Assert.assertEquals("Collection values should match", expectedValues, actualValues);
   }
 
-  private void checkCountColumn(
-      Row row, String columnName, String[] keys, Consumer<Long> columnCheck) {
-    scala.collection.Map<String, Long> column = row.getAs(columnName);
-    for (String key : keys) {
-      columnCheck.accept(column.get(key).get());
+  private void checkMetric(Row row, String metricName, String[] columns, Consumer<Long> check) {
+
+    scala.collection.Map<String, Row> metrics = row.getAs("readable_metrics");
+    for (String column : columns) {
+      Option<Row> rowOption = metrics.get(column);
+      Assert.assertTrue("Missing metric for column: " + column, rowOption.isDefined());
+      Long metric = rowOption.get().getAs(metricName);
+      check.accept(metric);
     }
   }
 
-  private void checkCountColumn(Row row, String columnName, Map<String, Long> expected) {
-    scala.collection.Map<String, Long> column = row.getAs(columnName);
-    Assert.assertEquals("Map values should match", expected, JavaConverters.mapAsJavaMap(column));
-  }
-
-  private void checkBoundColumn(Row row, String columnName, Map<String, String> expected) {
-    scala.collection.Map<String, String> column = row.getAs(columnName);
-    Assert.assertEquals("Map values should match", expected, JavaConverters.mapAsJavaMap(column));
+  private <T> void checkMetricValues(Row row, String metricName, Map<String, T> expected) {
+    scala.collection.Map<String, Row> metrics = row.getAs("readable_metrics");
+    Assert.assertEquals("Size does not match for " + metricName, expected.size(), metrics.size());
+    for (String column : expected.keySet()) {
+      Option<Row> rowOption = metrics.get(column);
+      Assert.assertTrue("Missing metric for column: " + column, rowOption.isDefined());
+      Assert.assertEquals(
+          "Values do not match for " + column,
+          expected.get(column),
+          rowOption.get().getAs(metricName));
+    }
   }
 }

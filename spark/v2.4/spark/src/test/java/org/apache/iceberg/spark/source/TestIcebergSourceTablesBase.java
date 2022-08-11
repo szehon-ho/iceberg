@@ -25,6 +25,7 @@ import static org.apache.iceberg.types.Types.NestedField.required;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkTableUtil;
@@ -1747,16 +1749,32 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
         .build();
   }
 
-  private void asMetadataRecord(GenericData.Record file) {
-    file.put(0, FileContent.DATA.id());
-    file.put(3, 0); // specId
+  static final Types.StructType EXPECTED_METRICS_VALUE_TYPE =
+      Types.StructType.of(
+          optional(303, "column_size", Types.LongType.get(), "Total size on disk"),
+          optional(304, "value_count", Types.LongType.get(), "Total count, including null and NaN"),
+          optional(305, "null_value_count", Types.LongType.get(), "Null value count"),
+          optional(306, "nan_value_count", Types.LongType.get(), "Nan value count"),
+          optional(307, "lower_bound", Types.StringType.get(), "Lower bound in string form"),
+          optional(308, "upper_bound", Types.StringType.get(), "Upper bound in string form"));
+
+  static final Types.NestedField EXPECTED_METRICS_FIELD =
+      required(
+          300,
+          "readable_metrics",
+          Types.MapType.ofRequired(301, 302, Types.StringType.get(), EXPECTED_METRICS_VALUE_TYPE));
+
+  public static GenericData.Record asMetadataRecordWithMetrics(
+      Table dataTable, GenericData.Record file) {
+    return asMetadataRecordWithMetrics(dataTable, file, FileContent.DATA);
   }
 
   @SuppressWarnings("unchecked")
-  private GenericData.Record asMetadataRecordWithMetrics(Table dataTable, GenericData.Record file) {
+  public static GenericData.Record asMetadataRecordWithMetrics(
+      Table dataTable, GenericData.Record file, FileContent content) {
     Schema icebergSchema =
         TypeUtil.join(
-            AvroSchemaUtil.toIceberg(file.getSchema()), MetricsUtil.METRICS_DISPLAY_SCHEMA);
+            AvroSchemaUtil.toIceberg(file.getSchema()), new Schema(EXPECTED_METRICS_FIELD));
     GenericData.Record record =
         new GenericData.Record(AvroSchemaUtil.convert(icebergSchema, "dummy"));
     Map<Integer, String> quotedNameById =
@@ -1765,63 +1783,49 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
     int filesFields = isPartitioned ? 17 : 16;
     for (int i = 0; i < filesFields; i++) {
       if (i == 0) {
-        record.put(0, FileContent.DATA.id());
+        record.put(0, content.id());
       } else if (i == 3) {
         record.put(3, 0); // spec id
       } else {
         record.put(i, file.get(i));
       }
     }
-    setExpectedFilesPosition(
-        record,
-        17,
-        isPartitioned,
-        MetricsUtil.readableCountsMetrics(
-            filesFieldPosition(file, 7, isPartitioned), quotedNameById));
-    setExpectedFilesPosition(
-        record,
-        18,
-        isPartitioned,
-        MetricsUtil.readableCountsMetrics(
-            filesFieldPosition(file, 8, isPartitioned), quotedNameById));
-    setExpectedFilesPosition(
-        record,
-        19,
-        isPartitioned,
-        MetricsUtil.readableCountsMetrics(
-            filesFieldPosition(file, 9, isPartitioned), quotedNameById));
-    setExpectedFilesPosition(
-        record,
-        20,
-        isPartitioned,
-        MetricsUtil.readableCountsMetrics(
-            filesFieldPosition(file, 10, isPartitioned), quotedNameById));
-    setExpectedFilesPosition(
-        record,
-        21,
-        isPartitioned,
-        MetricsUtil.readableBoundsMetrics(
-            filesFieldPosition(file, 11, isPartitioned), quotedNameById, dataTable.schema()));
-    setExpectedFilesPosition(
-        record,
-        22,
-        isPartitioned,
-        MetricsUtil.readableBoundsMetrics(
-            filesFieldPosition(file, 12, isPartitioned), quotedNameById, dataTable.schema()));
+    record.put(
+        isPartitioned ? 17 : 16,
+        convertToExpected(
+            MetricsUtil.readableMetricsMap(
+                dataTable.schema(),
+                quotedNameById,
+                (Map<Integer, Long>) file.get("column_sizes"),
+                (Map<Integer, Long>) file.get("value_counts"),
+                (Map<Integer, Long>) file.get("null_value_counts"),
+                (Map<Integer, Long>) file.get("nan_value_counts"),
+                (Map<Integer, ByteBuffer>) file.get("lower_bounds"),
+                (Map<Integer, ByteBuffer>) file.get("upper_bounds"))));
     return record;
   }
 
-  @SuppressWarnings("unchecked")
-  private <K, V> Map<K, V> filesFieldPosition(
-      GenericData.Record file, int position, boolean isPartitioned) {
-    int finalPosition = isPartitioned ? position : position - 1;
-    return (Map<K, V>) file.get(finalPosition);
+  public static void asMetadataRecord(GenericData.Record file) {
+    file.put(0, FileContent.DATA.id());
+    file.put(3, 0); // specId
   }
 
-  private <K, V> void setExpectedFilesPosition(
-      GenericData.Record file, int position, boolean isPartitioned, Map<K, V> value) {
-    int finalPosition = isPartitioned ? position : position - 1;
-    file.put(finalPosition, value);
+  public static Map<String, GenericData.Record> convertToExpected(
+      Map<String, StructLike> metricsMap) {
+    Map<String, GenericData.Record> result = Maps.newHashMap();
+    for (String key : metricsMap.keySet()) {
+      StructLike metrics = metricsMap.get(key);
+      GenericData.Record record =
+          new GenericData.Record(AvroSchemaUtil.convert(EXPECTED_METRICS_VALUE_TYPE));
+      record.put(0, metrics.get(0, Long.class));
+      record.put(1, metrics.get(1, Long.class));
+      record.put(2, metrics.get(2, Long.class));
+      record.put(3, metrics.get(3, Long.class));
+      record.put(4, metrics.get(4, String.class));
+      record.put(5, metrics.get(5, String.class));
+      result.put(key, record);
+    }
+    return result;
   }
 
   private PositionDeleteWriter<InternalRow> newPositionDeleteWriter(

@@ -18,6 +18,9 @@
  */
 package org.apache.iceberg;
 
+import static org.apache.iceberg.types.Types.NestedField.optional;
+import static org.apache.iceberg.types.Types.NestedField.required;
+
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 import java.util.List;
@@ -44,6 +47,21 @@ import org.apache.iceberg.types.Types.StructType;
 /** Base class logic for files metadata tables */
 abstract class BaseFilesTable extends BaseMetadataTable {
 
+  static final Types.StructType READABLE_METRICS_VALUE =
+      Types.StructType.of(
+          optional(303, "column_size", Types.LongType.get(), "Total size on disk"),
+          optional(304, "value_count", Types.LongType.get(), "Total count, including null and NaN"),
+          optional(305, "null_value_count", Types.LongType.get(), "Null value count"),
+          optional(306, "nan_value_count", Types.LongType.get(), "Nan value count"),
+          optional(307, "lower_bound", Types.StringType.get(), "Lower bound in string form"),
+          optional(308, "upper_bound", Types.StringType.get(), "Upper bound in string form"));
+
+  static final Types.NestedField READABLE_METRICS =
+      required(
+          300,
+          "readable_metrics",
+          Types.MapType.ofRequired(301, 302, Types.StringType.get(), READABLE_METRICS_VALUE));
+
   BaseFilesTable(TableOperations ops, Table table, String name) {
     super(ops, table, name);
   }
@@ -58,7 +76,7 @@ abstract class BaseFilesTable extends BaseMetadataTable {
       schema = TypeUtil.selectNot(schema, Sets.newHashSet(DataFile.PARTITION_ID));
     }
 
-    return TypeUtil.join(schema, MetricsUtil.METRICS_DISPLAY_SCHEMA);
+    return TypeUtil.join(schema, new Schema(READABLE_METRICS));
   }
 
   private static CloseableIterable<FileScanTask> planFiles(
@@ -192,8 +210,7 @@ abstract class BaseFilesTable extends BaseMetadataTable {
 
     private CloseableIterable<? extends ContentFile<?>> manifestEntries() {
       Schema finalProjectedSchema =
-          TypeUtil.selectNot(
-              filesTableSchema, TypeUtil.getProjectedIds(MetricsUtil.METRICS_DISPLAY_SCHEMA));
+          TypeUtil.selectNot(filesTableSchema, TypeUtil.getProjectedIds(READABLE_METRICS.type()));
       switch (manifest.content()) {
         case DATA:
           return ManifestFiles.read(manifest, io, specsById).project(finalProjectedSchema);
@@ -236,16 +253,16 @@ abstract class BaseFilesTable extends BaseMetadataTable {
               ContentFile::splitOffsets,
               ContentFile::equalityFieldIds,
               ContentFile::sortOrderId,
-              file -> MetricsUtil.readableCountsMetrics(file.columnSizes(), quotedNameById),
-              file -> MetricsUtil.readableCountsMetrics(file.valueCounts(), quotedNameById),
-              file -> MetricsUtil.readableCountsMetrics(file.nullValueCounts(), quotedNameById),
-              file -> MetricsUtil.readableCountsMetrics(file.nanValueCounts(), quotedNameById),
               file ->
-                  MetricsUtil.readableBoundsMetrics(
-                      file.lowerBounds(), quotedNameById, dataTableSchema),
-              file ->
-                  MetricsUtil.readableBoundsMetrics(
-                      file.upperBounds(), quotedNameById, dataTableSchema));
+                  MetricsUtil.readableMetricsMap(
+                      dataTableSchema,
+                      quotedNameById,
+                      file.columnSizes(),
+                      file.valueCounts(),
+                      file.nullValueCounts(),
+                      file.nanValueCounts(),
+                      file.lowerBounds(),
+                      file.upperBounds()));
       return partitioned
           ? accessors
           : Stream.concat(
