@@ -362,7 +362,7 @@ abstract class BaseFile<F>
 
   @Override
   public int size() {
-    return DataFile.getType(EMPTY_STRUCT_TYPE).fields().size();
+    return fromProjectionPos.length;
   }
 
   @Override

@@ -1777,8 +1777,8 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
             AvroSchemaUtil.toIceberg(file.getSchema()), new Schema(EXPECTED_METRICS_FIELD));
     GenericData.Record record =
         new GenericData.Record(AvroSchemaUtil.convert(icebergSchema, "dummy"));
-    Map<Integer, String> quotedNameById =
-        TypeUtil.indexQuotedNameById(dataTable.schema().asStruct(), name -> name);
+    Map<Integer, String> nameById =
+        TypeUtil.indexNameById(dataTable.schema().asStruct());
     boolean isPartitioned = Partitioning.partitionType(dataTable).fields().size() != 0;
     int filesFields = isPartitioned ? 17 : 16;
     for (int i = 0; i < filesFields; i++) {
@@ -1792,16 +1792,15 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
     }
     record.put(
         isPartitioned ? 17 : 16,
-        convertToExpected(
-            MetricsUtil.readableMetricsMap(
-                dataTable.schema(),
-                quotedNameById,
-                (Map<Integer, Long>) file.get("column_sizes"),
-                (Map<Integer, Long>) file.get("value_counts"),
-                (Map<Integer, Long>) file.get("null_value_counts"),
-                (Map<Integer, Long>) file.get("nan_value_counts"),
-                (Map<Integer, ByteBuffer>) file.get("lower_bounds"),
-                (Map<Integer, ByteBuffer>) file.get("upper_bounds"))));
+        expectedReadableMetrics(
+            dataTable.schema(),
+            nameById,
+            (Map<Integer, Long>) file.get("column_sizes"),
+            (Map<Integer, Long>) file.get("value_counts"),
+            (Map<Integer, Long>) file.get("null_value_counts"),
+            (Map<Integer, Long>) file.get("nan_value_counts"),
+            (Map<Integer, ByteBuffer>) file.get("lower_bounds"),
+            (Map<Integer, ByteBuffer>) file.get("upper_bounds")));
     return record;
   }
 
@@ -1810,20 +1809,28 @@ public abstract class TestIcebergSourceTablesBase extends SparkTestBase {
     file.put(3, 0); // specId
   }
 
-  public static Map<String, GenericData.Record> convertToExpected(
-      Map<String, StructLike> metricsMap) {
+  public static Map<String, GenericData.Record> expectedReadableMetrics(
+      Schema dataTableSchema,
+      Map<Integer, String> nameById,
+      Map<Integer, Long> columnSizes,
+      Map<Integer, Long> valueCounts,
+      Map<Integer, Long> nullValueCounts,
+      Map<Integer, Long> nanValueCounts,
+      Map<Integer, ByteBuffer> lowerBounds,
+      Map<Integer, ByteBuffer> upperBounds) {
     Map<String, GenericData.Record> result = Maps.newHashMap();
-    for (String key : metricsMap.keySet()) {
-      StructLike metrics = metricsMap.get(key);
+    for (int columnId : nameById.keySet()) {
       GenericData.Record record =
           new GenericData.Record(AvroSchemaUtil.convert(EXPECTED_METRICS_VALUE_TYPE));
-      record.put(0, metrics.get(0, Long.class));
-      record.put(1, metrics.get(1, Long.class));
-      record.put(2, metrics.get(2, Long.class));
-      record.put(3, metrics.get(3, Long.class));
-      record.put(4, metrics.get(4, String.class));
-      record.put(5, metrics.get(5, String.class));
-      result.put(key, record);
+      record.put(0, columnSizes == null ? null : columnSizes.get(columnId));
+      record.put(1, valueCounts == null ? null : valueCounts.get(columnId));
+      record.put(2, nullValueCounts == null ? null : nullValueCounts.get(columnId));
+      record.put(3, nanValueCounts == null ? null : nanValueCounts.get(columnId));
+      record.put(4, lowerBounds == null ? null : MetricsUtil.convertToReadable(dataTableSchema.findField(columnId),
+          lowerBounds.get(columnId)));
+      record.put(5, upperBounds == null ? null : MetricsUtil.convertToReadable(dataTableSchema.findField(columnId),
+          upperBounds.get(columnId)));
+      result.put(nameById.get(columnId), record);
     }
     return result;
   }

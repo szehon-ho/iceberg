@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
 
 public class MetricsUtil {
 
-  private static final Logger logger = LoggerFactory.getLogger(MetricsUtil.class);
+  private static final Logger LOG = LoggerFactory.getLogger(MetricsUtil.class);
 
   private MetricsUtil() {}
 
@@ -69,31 +69,29 @@ public class MetricsUtil {
    * Return a readable metrics map
    *
    * @param schema schema of original data table
-   * @param quotedNameById pre-computed map of all column ids in schema to readable name, see {@link
-   *     org.apache.iceberg.types.TypeUtil#indexQuotedNameById}
-   * @param columnSizes column size metrics
-   * @param valueCounts value count metrics
-   * @param nullValueCounts null value metrics
-   * @param nanValueCounts nan value metrics
-   * @param lowerBounds lower bound metrics
-   * @param upperBounds upper bound metrics
+   * @param namesById pre-computed map of all column ids in schema to readable name, see {@link
+   *     org.apache.iceberg.types.TypeUtil#indexNameById(Types.StructType)}
+   * @param contentFile content file with metrics
    * @return map of readable column name to column metric, of which the bounds are made readable
    */
   public static Map<String, StructLike> readableMetricsMap(
       Schema schema,
-      Map<Integer, String> quotedNameById,
-      Map<Integer, Long> columnSizes,
-      Map<Integer, Long> valueCounts,
-      Map<Integer, Long> nullValueCounts,
-      Map<Integer, Long> nanValueCounts,
-      Map<Integer, ByteBuffer> lowerBounds,
-      Map<Integer, ByteBuffer> upperBounds) {
-    Map<String, StructLike> metricsStruct = Maps.newHashMapWithExpectedSize(quotedNameById.size());
-    for (int id : quotedNameById.keySet()) {
+      Map<Integer, String> namesById,
+      ContentFile<?> contentFile) {
+    Map<String, StructLike> metricsStruct = Maps.newHashMapWithExpectedSize(namesById.size());
+
+    Map<Integer, Long> columnSizes = contentFile.columnSizes();
+    Map<Integer, Long> valueCounts = contentFile.valueCounts();
+    Map<Integer, Long> nullValueCounts = contentFile.nullValueCounts();
+    Map<Integer, Long> nanValueCounts = contentFile.nanValueCounts();
+    Map<Integer, ByteBuffer> lowerBounds = contentFile.lowerBounds();
+    Map<Integer, ByteBuffer> upperBounds = contentFile.upperBounds();
+
+    for (int id : namesById.keySet()) {
       Types.NestedField field = schema.findField(id);
       if (field.type().isPrimitiveType()) {
         // Iceberg stores metrics only for primitive types
-        String colName = quotedNameById.get(id);
+        String colName = namesById.get(id);
         ReadableMetricsStruct struct =
             new ReadableMetricsStruct(
                 columnSizes == null ? null : columnSizes.get(id),
@@ -116,7 +114,7 @@ public class MetricsUtil {
       return Transforms.identity(field.type())
           .toHumanString(Conversions.fromByteBuffer(field.type(), value));
     } catch (Exception e) {
-      logger.warn("Error converting metric to readable form", e);
+      LOG.warn("Error converting metric to readable form", e);
       return null;
     }
   }

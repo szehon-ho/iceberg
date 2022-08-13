@@ -98,6 +98,7 @@ public interface DataFile extends ContentFile<DataFile> {
   Types.NestedField SORT_ORDER_ID =
       optional(140, "sort_order_id", IntegerType.get(), "Sort order ID");
   Types.NestedField SPEC_ID = optional(141, "spec_id", IntegerType.get(), "Partition spec ID");
+  Types.NestedField FILE_ORDINAL = optional(142, "file_ordinal", IntegerType.get(), "File ordinal");
 
   int PARTITION_ID = 102;
   String PARTITION_NAME = "partition";

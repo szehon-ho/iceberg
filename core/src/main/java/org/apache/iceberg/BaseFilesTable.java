@@ -52,7 +52,7 @@ abstract class BaseFilesTable extends BaseMetadataTable {
           optional(303, "column_size", Types.LongType.get(), "Total size on disk"),
           optional(304, "value_count", Types.LongType.get(), "Total count, including null and NaN"),
           optional(305, "null_value_count", Types.LongType.get(), "Null value count"),
-          optional(306, "nan_value_count", Types.LongType.get(), "Nan value count"),
+          optional(306, "nan_value_count", Types.LongType.get(), "NaN value count"),
           optional(307, "lower_bound", Types.StringType.get(), "Lower bound in string form"),
           optional(308, "upper_bound", Types.StringType.get(), "Upper bound in string form"));
 
@@ -107,6 +107,8 @@ abstract class BaseFilesTable extends BaseMetadataTable {
     Expression filter = ignoreResiduals ? Expressions.alwaysTrue() : rowFilter;
     ResidualEvaluator residuals = ResidualEvaluator.unpartitioned(filter);
 
+    Map<Integer, String> fieldById = TypeUtil.indexNameById(table.schema().asStruct());
+
     return CloseableIterable.transform(
         filteredManifests,
         manifest ->
@@ -117,7 +119,8 @@ abstract class BaseFilesTable extends BaseMetadataTable {
                 projectedSchema,
                 schemaString,
                 specString,
-                residuals));
+                residuals,
+                fieldById));
   }
 
   abstract static class BaseFilesTableScan extends BaseMetadataTableScan {
@@ -136,7 +139,9 @@ abstract class BaseFilesTable extends BaseMetadataTable {
       super(ops, table, schema, tableType, context);
     }
 
-    /** Returns an iterable of manifest files to explore for this files metadata table scan */
+    /**
+     * Returns an iterable of manifest files to explore for this files metadata table scan
+     */
     protected abstract CloseableIterable<ManifestFile> manifests();
 
     @Override
@@ -161,7 +166,9 @@ abstract class BaseFilesTable extends BaseMetadataTable {
       super(ops, table, schema, tableType, context);
     }
 
-    /** Returns an iterable of manifest files to explore for this all files metadata table scan */
+    /**
+     * Returns an iterable of manifest files to explore for this all files metadata table scan
+     */
     protected abstract CloseableIterable<ManifestFile> manifests();
 
     @Override
@@ -175,10 +182,9 @@ abstract class BaseFilesTable extends BaseMetadataTable {
     private final Map<Integer, PartitionSpec> specsById;
     private final ManifestFile manifest;
     private final Schema dataTableSchema;
-    private final Schema filesTableSchema;
     private final Schema projectedSchema;
-    private final Map<Integer, String> quotedNameById;
-    private final boolean isPartitioned;
+    private final Map<Integer, String> dataTableFields;
+    private final boolean readableMetrics;
 
     ManifestReadTask(
         Table table,
@@ -187,16 +193,17 @@ abstract class BaseFilesTable extends BaseMetadataTable {
         Schema projectedSchema,
         String schemaString,
         String specString,
-        ResidualEvaluator residuals) {
+        ResidualEvaluator residuals,
+        Map<Integer, String> dataTableFields) {
       super(DataFiles.fromManifest(manifest), null, schemaString, specString, residuals);
       this.io = table.io();
       this.specsById = Maps.newHashMap(table.specs());
       this.manifest = manifest;
-      this.filesTableSchema = schema;
-      this.projectedSchema = projectedSchema;
       this.dataTableSchema = table.schema();
-      this.quotedNameById = TypeUtil.indexQuotedNameById(table.schema().asStruct(), name -> name);
-      this.isPartitioned = Partitioning.partitionType(table).fields().size() > 0;
+      this.dataTableFields = dataTableFields;
+//      this.isPartitioned = projectedSchema.findField(DataFile.PARTITION_ID) != null;
+      this.projectedSchema = projectedSchema;
+      this.readableMetrics = projectedSchema.findField(READABLE_METRICS.fieldId()) != null;
     }
 
     @Override
@@ -204,19 +211,19 @@ abstract class BaseFilesTable extends BaseMetadataTable {
       return CloseableIterable.transform(
           manifestEntries(),
           fileEntry ->
-              StaticDataTask.Row.of(
-                  projectedFields(fileEntry, accessors(isPartitioned)).toArray()));
+              new FileEntryRow((StructLike) fileEntry,
+                  readableMetrics ? MetricsUtil.readableMetricsMap(dataTableSchema, dataTableFields, fileEntry) : null));
     }
 
     private CloseableIterable<? extends ContentFile<?>> manifestEntries() {
-      Schema finalProjectedSchema =
-          TypeUtil.selectNot(filesTableSchema, TypeUtil.getProjectedIds(READABLE_METRICS.type()));
+      Schema fileProjection =
+          TypeUtil.selectNot(projectedSchema, TypeUtil.getProjectedIds(READABLE_METRICS.type()));
       switch (manifest.content()) {
         case DATA:
-          return ManifestFiles.read(manifest, io, specsById).project(finalProjectedSchema);
+          return ManifestFiles.read(manifest, io, specsById).project(fileProjection);
         case DELETES:
           return ManifestFiles.readDeleteManifest(manifest, io, specsById)
-              .project(finalProjectedSchema);
+              .project(fileProjection);
         default:
           throw new IllegalArgumentException(
               "Unsupported manifest content type:" + manifest.content());
@@ -233,59 +240,90 @@ abstract class BaseFilesTable extends BaseMetadataTable {
       return manifest;
     }
 
-    private List<Function<ContentFile<?>, Object>> accessors(boolean partitioned) {
-      List<Function<ContentFile<?>, Object>> accessors =
-          Lists.newArrayList(
-              file -> file.content().id(),
-              ContentFile::path,
-              file -> file.format().toString(),
-              ContentFile::specId,
-              ContentFile::partition,
-              ContentFile::recordCount,
-              ContentFile::fileSizeInBytes,
-              ContentFile::columnSizes,
-              ContentFile::valueCounts,
-              ContentFile::nullValueCounts,
-              ContentFile::nanValueCounts,
-              ContentFile::lowerBounds,
-              ContentFile::upperBounds,
-              ContentFile::keyMetadata,
-              ContentFile::splitOffsets,
-              ContentFile::equalityFieldIds,
-              ContentFile::sortOrderId,
-              file ->
-                  MetricsUtil.readableMetricsMap(
-                      dataTableSchema,
-                      quotedNameById,
-                      file.columnSizes(),
-                      file.valueCounts(),
-                      file.nullValueCounts(),
-                      file.nanValueCounts(),
-                      file.lowerBounds(),
-                      file.upperBounds()));
-      return partitioned
-          ? accessors
-          : Stream.concat(
-                  accessors.subList(0, 4).stream(), accessors.subList(5, accessors.size()).stream())
-              .collect(Collectors.toList());
+//    private List<Function<ContentFile<?>, Object>> accessors(boolean partitioned) {
+//      List<Function<ContentFile<?>, Object>> accessors =
+//          Lists.newArrayList(
+//              file -> file.content().id(),
+//              ContentFile::path,
+//              file -> file.format().toString(),
+//              ContentFile::specId,
+//              ContentFile::partition,
+//              ContentFile::recordCount,
+//              ContentFile::fileSizeInBytes,
+//              ContentFile::columnSizes,
+//              ContentFile::valueCounts,
+//              ContentFile::nullValueCounts,
+//              ContentFile::nanValueCounts,
+//              ContentFile::lowerBounds,
+//              ContentFile::upperBounds,
+//              ContentFile::keyMetadata,
+//              ContentFile::splitOffsets,
+//              ContentFile::equalityFieldIds,
+//              ContentFile::sortOrderId,
+//              file ->
+//                  MetricsUtil.readableMetricsMap(
+//                      dataTableSchema,
+//                      dataTableFields,
+//                      file));
+//      return partitioned
+//          ? accessors
+//          : Stream.concat(
+//                  accessors.subList(0, 4).stream(), accessors.subList(5, accessors.size()).stream())
+//              .collect(Collectors.toList());
+//    }
+//
+//    private List<Object> projectedFields(
+//        ContentFile<?> file, List<Function<ContentFile<?>, Object>> accessors) {
+//      Preconditions.checkArgument(
+//          accessors.size() == filesTableSchema.columns().size(),
+//          "There must be an accessor provided for every field in files metadata table, required %s but found %s",
+//          filesTableSchema.columns().size(),
+//          accessors.size());
+//      List<Object> result = Lists.newArrayList();
+//      int fieldIndex = 0;
+//      for (Types.NestedField field : filesTableSchema.columns()) {
+//        if (projectedSchema.findColumnName(field.fieldId()) != null) {
+//          result.add(accessors.get(fieldIndex).apply(file));
+//        }
+//        fieldIndex++;
+//      }
+//      return result;
+//    }
+//  }
+  }
+
+  private static class FileEntryRow implements StructLike {
+    private final StructLike fileAsStruct;
+    private final Map<String, StructLike> readableMetrics;
+
+    private FileEntryRow(StructLike fileAsStruct, Map<String, StructLike> readableMetrics) {
+      this.fileAsStruct = fileAsStruct;
+      this.readableMetrics = readableMetrics;
     }
 
-    private List<Object> projectedFields(
-        ContentFile<?> file, List<Function<ContentFile<?>, Object>> accessors) {
-      Preconditions.checkArgument(
-          accessors.size() == filesTableSchema.columns().size(),
-          "There must be an accessor provided for every field in files metadata table, required %s but found %s",
-          filesTableSchema.columns().size(),
-          accessors.size());
-      List<Object> result = Lists.newArrayList();
-      int fieldIndex = 0;
-      for (Types.NestedField field : filesTableSchema.columns()) {
-        if (projectedSchema.findColumnName(field.fieldId()) != null) {
-          result.add(accessors.get(fieldIndex).apply(file));
+    @Override
+    public int size() {
+      return readableMetrics == null ? fileAsStruct.size() : fileAsStruct.size() + 1;
+    }
+
+    @Override
+    public <T> T get(int pos, Class<T> javaClass) {
+      if (pos < fileAsStruct.size()) {
+        return fileAsStruct.get(pos, javaClass);
+      } else if (pos == fileAsStruct.size()) {
+        if (readableMetrics == null) {
+          return null;
         }
-        fieldIndex++;
+        return javaClass.cast(readableMetrics);
+      } else {
+        throw new IllegalArgumentException(String.format(
+            "Illegal position access for FileRow: %d, max allowed is %d", pos, fileAsStruct.size()));
       }
-      return result;
+    }
+
+    @Override
+    public <T> void set(int pos, T value) {
+      throw new UnsupportedOperationException("FileEntryRow is read only");
     }
   }
 }
