@@ -41,6 +41,6 @@ class SparkFilesScanBuilder implements ScanBuilder {
 
   @Override
   public Scan build() {
-    return new SparkStagedScan(spark, table, readConf);
+      return new SparkFilesScan(spark, table, readConf);
   }
 }

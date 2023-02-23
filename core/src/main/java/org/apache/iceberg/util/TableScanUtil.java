@@ -79,6 +79,23 @@ public class TableScanUtil {
     return CloseableIterable.combine(splitTasks, tasks);
   }
 
+  public static <T extends ScanTask> CloseableIterable<T> splitScanTasks(
+      CloseableIterable<T> tasks, long splitSize) {
+    Preconditions.checkArgument(splitSize > 0, "Split size must be > 0: %s", splitSize);
+
+    return CloseableIterable.combine(
+        FluentIterable.from(tasks)
+            .transformAndConcat(
+                task -> {
+                  if (task instanceof SplittableScanTask<?>) {
+                    return ((SplittableScanTask<? extends T>) task).split(splitSize);
+                  } else {
+                    return ImmutableList.of(task);
+                  }
+                }),
+        tasks);
+  }
+
   public static CloseableIterable<CombinedScanTask> planTasks(
       CloseableIterable<FileScanTask> splitFiles, long splitSize, int lookback, long openFileCost) {
 
@@ -112,18 +129,7 @@ public class TableScanUtil {
     validatePlanningArguments(splitSize, lookback, openFileCost);
 
     // capture manifests which can be closed after scan planning
-    CloseableIterable<T> splitTasks =
-        CloseableIterable.combine(
-            FluentIterable.from(tasks)
-                .transformAndConcat(
-                    task -> {
-                      if (task instanceof SplittableScanTask<?>) {
-                        return ((SplittableScanTask<? extends T>) task).split(splitSize);
-                      } else {
-                        return ImmutableList.of(task);
-                      }
-                    }),
-            tasks);
+    CloseableIterable<T> splitTasks = splitScanTasks(tasks, splitSize);
 
     Function<T, Long> weightFunc =
         task -> Math.max(task.sizeBytes(), task.filesCount() * openFileCost);

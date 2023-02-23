@@ -51,7 +51,11 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterators;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+<<<<<<< HEAD
 import org.apache.iceberg.spark.ScanTaskSetManager;
+=======
+import org.apache.iceberg.spark.PositionDeletesScanTaskSetManager;
+>>>>>>> 6fcc0fc8b (Implement FileScanTaskSetManager and FileRewriteCoordinator for Position Deletes)
 import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkStructLike;
 import org.apache.iceberg.spark.SparkTestBase;
@@ -672,8 +676,8 @@ public class TestPositionDeletesTable extends SparkTestBase {
   }
 
   @Test
-  public void testScanTaskSetManager() throws IOException {
-    String tableName = "scan_task_set_manager";
+  public void testFileSetManager() throws IOException {
+    String tableName = "file_set_manager";
     PartitionSpec spec = PartitionSpec.builderFor(SCHEMA).identity("data").build();
     Table tab = createTable(tableName, SCHEMA, spec);
 
