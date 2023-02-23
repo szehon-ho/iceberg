@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.spark.source;
 
+import org.apache.iceberg.PositionDeletesTable;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.spark.sql.SparkSession;
@@ -39,6 +40,10 @@ class SparkFilesScanBuilder implements ScanBuilder {
 
   @Override
   public Scan build() {
-    return new SparkFilesScan(spark, table, readConf);
+    if (table instanceof PositionDeletesTable) {
+      return new SparkPositionDeletesScan(spark, table, readConf);
+    } else {
+      return new SparkFilesScan(spark, table, readConf);
+    }
   }
 }

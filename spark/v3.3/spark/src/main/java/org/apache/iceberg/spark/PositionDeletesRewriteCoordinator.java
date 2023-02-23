@@ -18,15 +18,16 @@
  */
 package org.apache.iceberg.spark;
 
-import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.DeleteFile;
 
-public class FileScanTaskSetManager extends AbstractScanTaskSetManager<FileScanTask> {
+public class PositionDeletesRewriteCoordinator extends AbstractFileRewriteCoordinator<DeleteFile> {
 
-  private static final FileScanTaskSetManager INSTANCE = new FileScanTaskSetManager();
+  private static final PositionDeletesRewriteCoordinator INSTANCE =
+      new PositionDeletesRewriteCoordinator();
 
-  private FileScanTaskSetManager() {}
+  private PositionDeletesRewriteCoordinator() {}
 
-  public static FileScanTaskSetManager get() {
+  public static PositionDeletesRewriteCoordinator get() {
     return INSTANCE;
   }
 }

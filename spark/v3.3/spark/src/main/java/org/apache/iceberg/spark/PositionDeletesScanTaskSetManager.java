@@ -18,15 +18,17 @@
  */
 package org.apache.iceberg.spark;
 
-import org.apache.iceberg.FileScanTask;
+import org.apache.iceberg.PositionDeletesScanTask;
 
-public class FileScanTaskSetManager extends AbstractScanTaskSetManager<FileScanTask> {
+public class PositionDeletesScanTaskSetManager
+    extends AbstractScanTaskSetManager<PositionDeletesScanTask> {
 
-  private static final FileScanTaskSetManager INSTANCE = new FileScanTaskSetManager();
+  private static final PositionDeletesScanTaskSetManager INSTANCE =
+      new PositionDeletesScanTaskSetManager();
 
-  private FileScanTaskSetManager() {}
+  private PositionDeletesScanTaskSetManager() {}
 
-  public static FileScanTaskSetManager get() {
+  public static PositionDeletesScanTaskSetManager get() {
     return INSTANCE;
   }
 }
