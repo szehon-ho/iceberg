@@ -16,17 +16,29 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.spark;
+package org.apache.iceberg.spark.source;
 
-import org.apache.iceberg.DataFile;
+import org.apache.iceberg.Table;
+import org.apache.iceberg.spark.SparkReadConf;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.connector.read.Scan;
+import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
-public class FileRewriteCoordinator extends AbstractFileRewriteCoordinator<DataFile> {
+class SparkStagedScanBuilder implements ScanBuilder {
 
-  private static final FileRewriteCoordinator INSTANCE = new FileRewriteCoordinator();
+  private final SparkSession spark;
+  private final Table table;
+  private final SparkReadConf readConf;
 
-  private FileRewriteCoordinator() {}
+  SparkStagedScanBuilder(SparkSession spark, Table table, CaseInsensitiveStringMap options) {
+    this.spark = spark;
+    this.table = table;
+    this.readConf = new SparkReadConf(spark, table, options);
+  }
 
-  public static FileRewriteCoordinator get() {
-    return INSTANCE;
+  @Override
+  public Scan build() {
+    return new SparkStagedScan(spark, table, readConf);
   }
 }
