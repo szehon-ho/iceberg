@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import org.apache.iceberg.DataFile;
@@ -33,6 +35,8 @@ import org.apache.iceberg.MetadataTableUtils;
 import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Partitioning;
+import org.apache.iceberg.PositionDeletesScanTask;
+import org.apache.iceberg.ScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
@@ -43,17 +47,25 @@ import org.apache.iceberg.data.FileHelpers;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.deletes.PositionDelete;
+import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
+import org.apache.iceberg.relocated.com.google.common.collect.Iterators;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.spark.PosDeletesRewriteCoordinator;
+import org.apache.iceberg.spark.PositionDeletesScanTaskSetManager;
+import org.apache.iceberg.spark.SparkCatalogConfig;
+import org.apache.iceberg.spark.SparkCatalogTestBase;
+import org.apache.iceberg.spark.SparkReadOptions;
 import org.apache.iceberg.spark.SparkStructLike;
-import org.apache.iceberg.spark.SparkTestBase;
+import org.apache.iceberg.spark.SparkWriteOptions;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.CharSequenceSet;
 import org.apache.iceberg.util.Pair;
 import org.apache.iceberg.util.StructLikeSet;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.functions;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -61,22 +73,51 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RunWith(Parameterized.class)
-public class TestPositionDeletesTable extends SparkTestBase {
+public class TestPositionDeletesTable extends SparkCatalogTestBase {
 
   public static final Schema SCHEMA =
       new Schema(
           Types.NestedField.required(1, "id", Types.IntegerType.get()),
           Types.NestedField.required(2, "data", Types.StringType.get()));
+  private static final Map<String, String> CATALOG_PROPS =
+      ImmutableMap.of(
+          "type", "hive",
+          "default-namespace", "default",
+          "cache-enabled", "false");
+
   private final FileFormat format;
 
-  @Parameterized.Parameters(name = "fileFormat = {0}")
+
+  @Parameterized.Parameters(name = "formatVersion = {0}, catalogName = {1}, implementation = {2}, config = {3}, fileFormat = {4}")
   public static Object[][] parameters() {
-    return new Object[][] {{FileFormat.PARQUET}, {FileFormat.AVRO}, {FileFormat.ORC}};
+    return new Object[][] {
+        {
+            SparkCatalogConfig.HIVE.catalogName(),
+            SparkCatalogConfig.HIVE.implementation(),
+            CATALOG_PROPS,
+            FileFormat.PARQUET
+        },
+        {
+            SparkCatalogConfig.HIVE.catalogName(),
+            SparkCatalogConfig.HIVE.implementation(),
+            CATALOG_PROPS,
+            FileFormat.AVRO
+        },
+        {
+            SparkCatalogConfig.HIVE.catalogName(),
+            SparkCatalogConfig.HIVE.implementation(),
+            CATALOG_PROPS,
+            FileFormat.ORC
+        },
+    };
   }
 
-  public TestPositionDeletesTable(FileFormat format) {
+  public TestPositionDeletesTable(String catalogName, String implementation, Map<String, String> config, FileFormat format) {
+    super(catalogName, implementation, config);
     this.format = format;
   }
 
@@ -126,6 +167,8 @@ public class TestPositionDeletesTable extends SparkTestBase {
     Pair<List<PositionDelete<?>>, DeleteFile> deletesB = deleteFile(tab, dataFileB, "b");
 
     tab.newRowDelta().addDeletes(deletesA.second()).addDeletes(deletesB.second()).commit();
+
+
 
     // Select deletes from one partition
     StructLikeSet actual = actual(tableName, tab, "row.data='b'");
@@ -664,13 +707,79 @@ public class TestPositionDeletesTable extends SparkTestBase {
     dropTable(tableName);
   }
 
+  @Test
+  public void testFileSetManager() throws NoSuchTableException, IOException {
+    String tableName = "bin_pack_rewrite";
+    PartitionSpec spec = PartitionSpec.builderFor(SCHEMA).identity("data").build();
+    Table tab = createTable(tableName, SCHEMA, spec);
+
+    DataFile dataFileA = dataFile(tab, "a");
+    DataFile dataFileB = dataFile(tab, "b");
+    tab.newAppend().appendFile(dataFileA).appendFile(dataFileB).commit();
+
+    // Add position deletes for both partitions
+    Pair<List<PositionDelete<?>>, DeleteFile> deletesA = deleteFile(tab, dataFileA, "a");
+    Pair<List<PositionDelete<?>>, DeleteFile> deletesB = deleteFile(tab, dataFileA, "b");
+    tab.newRowDelta().addDeletes(deletesA.second()).addDeletes(deletesB.second()).commit();
+
+    Table posDeletesTable = MetadataTableUtils.createMetadataTableInstance(tab, MetadataTableType.POSITION_DELETES);
+    String posDeletesTableName = catalogName + ".default." + tableName + ".position_deletes";
+    try (CloseableIterable<ScanTask> tasks = posDeletesTable.newBatchScan().planFiles()) {
+      String fileSetID = UUID.randomUUID().toString();
+
+      PositionDeletesScanTaskSetManager taskSetManager = PositionDeletesScanTaskSetManager.get();
+      taskSetManager.stageTasks(tab, fileSetID,
+          Lists.newArrayList(Iterators.transform(tasks.iterator(), t -> (PositionDeletesScanTask) t)));
+
+      long splitSize = Math.min(deletesA.second().fileSizeInBytes(), deletesB.second().fileSizeInBytes());
+
+      // read and pack original 4 files into 2 splits
+      Dataset<Row> scanDF =
+          spark
+              .read()
+              .format("iceberg")
+              .option(SparkReadOptions.FILE_SCAN_TASK_SET_ID, fileSetID)
+              .option(SparkReadOptions.SPLIT_SIZE, splitSize)
+//              .option(SparkReadOptions.FILE_OPEN_COST, "0")
+              .load(posDeletesTableName);
+
+      Assert.assertEquals("Num partitions should match", 2, scanDF.javaRDD().getNumPartitions());
+
+      dropTable(tableName);
+
+//      // write the packed data into new files where each split becomes a new file
+//      scanDF
+//          .writeTo(posDeletesTableName)
+//          .option(SparkWriteOptions.REWRITTEN_FILE_SCAN_TASK_SET_ID, fileSetID)
+//          .append();
+//
+//      // commit the rewrite
+//      PosDeletesRewriteCoordinator rewriteCoordinator = PosDeletesRewriteCoordinator.get();
+//      Set<DeleteFile> rewrittenFiles =
+//          taskSetManager.fetchTasks(posDeletesTable, fileSetID).stream()
+//              .map(PositionDeletesScanTask::file)
+//              .collect(Collectors.toSet());
+//      Set<DeleteFile> addedFiles = rewriteCoordinator.fetchNewDataFiles(posDeletesTable, fileSetID);
+//      tab.newRewrite().rewriteFiles(rewrittenFiles, addedFiles).commit();
+    }
+
+//    tab.refresh();
+
+//    Map<String, String> summary = table.currentSnapshot().summary();
+//    Assert.assertEquals("Deleted files count must match", "4", summary.get("deleted-data-files"));
+//    Assert.assertEquals("Added files count must match", "2", summary.get("added-data-files"));
+//
+//    Object rowCount = scalarSql("SELECT count(*) FROM %s", tableName);
+//    Assert.assertEquals("Row count must match", 4000L, rowCount);
+  }
+
   private StructLikeSet actual(String tableName, Table table) {
     return actual(tableName, table, null);
   }
 
   private StructLikeSet actual(String tableName, Table table, String filter) {
     Dataset<Row> df =
-        spark.read().format("iceberg").load("default." + tableName + ".position_deletes");
+        spark.read().format("iceberg").load(catalogName + ".default." + tableName + ".position_deletes");
     if (filter != null) {
       df = df.filter(filter);
     }
@@ -695,11 +804,11 @@ public class TestPositionDeletesTable extends SparkTestBase {
             "2",
             TableProperties.DEFAULT_FILE_FORMAT,
             format.toString());
-    return catalog.createTable(TableIdentifier.of("default", name), schema, spec, properties);
+    return validationCatalog.createTable(TableIdentifier.of("default", name), schema, spec, properties);
   }
 
   protected void dropTable(String name) {
-    catalog.dropTable(TableIdentifier.of("default", name));
+    validationCatalog.dropTable(TableIdentifier.of("default", name), false);
   }
 
   private PositionDelete<GenericRecord> positionDelete(CharSequence path, Long position) {

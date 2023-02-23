@@ -21,11 +21,8 @@ package org.apache.iceberg.spark.source;
 import java.util.List;
 import java.util.Objects;
 import org.apache.iceberg.CombinedScanTask;
-import org.apache.iceberg.ContentScanTask;
-import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.PositionDeletesScanTask;
-import org.apache.iceberg.PositionDeletesTable;
 import org.apache.iceberg.ScanTaskGroup;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.exceptions.ValidationException;
@@ -38,15 +35,15 @@ import org.apache.iceberg.spark.SparkReadConf;
 import org.apache.iceberg.util.TableScanUtil;
 import org.apache.spark.sql.SparkSession;
 
-class SparkFilesScan extends SparkScan {
+class SparkPositionDeletesScan extends SparkScan {
   private final String taskSetID;
   private final long splitSize;
   private final int splitLookback;
   private final long splitOpenFileCost;
 
-  private List<CombinedScanTask> tasks = null; // lazy cache of tasks
+  private List<ScanTaskGroup<PositionDeletesScanTask>> tasks = null; // lazy cache of tasks
 
-  SparkFilesScan(SparkSession spark, Table table, SparkReadConf readConf) {
+  SparkPositionDeletesScan(SparkSession spark, Table table, SparkReadConf readConf) {
     super(spark, table, readConf, table.schema(), ImmutableList.of());
 
     this.taskSetID = readConf.fileScanTaskSetId();
@@ -56,21 +53,21 @@ class SparkFilesScan extends SparkScan {
   }
 
   @Override
-  protected List<CombinedScanTask> taskGroups() {
+  protected List<ScanTaskGroup<PositionDeletesScanTask>> taskGroups() {
     if (tasks == null) {
 
-        FileScanTaskSetManager taskSetManager = FileScanTaskSetManager.get();
-        List<FileScanTask> files = taskSetManager.fetchTasks(table(), taskSetID);
+        PositionDeletesScanTaskSetManager taskSetManager = PositionDeletesScanTaskSetManager.get();
+        List<PositionDeletesScanTask> files = taskSetManager.fetchTasks(table(), taskSetID);
         ValidationException.check(
             files != null,
             "Task set manager has no tasks for table %s with id %s",
             table(),
             taskSetID);
 
-        CloseableIterable<FileScanTask> splitFiles =
-            TableScanUtil.splitFiles(CloseableIterable.withNoopClose(files), splitSize);
-        CloseableIterable<CombinedScanTask> scanTasks =
-            TableScanUtil.planTasks(
+        CloseableIterable<PositionDeletesScanTask> splitFiles =
+            TableScanUtil.splitScanTasks(CloseableIterable.withNoopClose(files), splitSize);
+        CloseableIterable<ScanTaskGroup<PositionDeletesScanTask>> scanTasks =
+            TableScanUtil.planTaskGroups(
                 splitFiles, splitSize,
                 splitLookback, splitOpenFileCost);
 
@@ -90,7 +87,7 @@ class SparkFilesScan extends SparkScan {
       return false;
     }
 
-    SparkFilesScan that = (SparkFilesScan) other;
+    SparkPositionDeletesScan that = (SparkPositionDeletesScan) other;
     return table().name().equals(that.table().name())
         && Objects.equals(taskSetID, that.taskSetID)
         && Objects.equals(splitSize, that.splitSize)
@@ -106,7 +103,7 @@ class SparkFilesScan extends SparkScan {
   @Override
   public String toString() {
     return String.format(
-        "IcebergFilesScan(table=%s, type=%s, taskSetID=%s, caseSensitive=%s)",
+        "IcebergPositionDeletessScan(table=%s, type=%s, taskSetID=%s, caseSensitive=%s)",
         table(), expectedSchema().asStruct(), taskSetID, caseSensitive());
   }
 }
