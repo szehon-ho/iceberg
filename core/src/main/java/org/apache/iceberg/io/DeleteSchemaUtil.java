@@ -29,7 +29,7 @@ public class DeleteSchemaUtil {
     return new Schema(
         MetadataColumns.DELETE_FILE_PATH,
         MetadataColumns.DELETE_FILE_POS,
-        Types.NestedField.required(
+        Types.NestedField.optional(
             MetadataColumns.DELETE_FILE_ROW_FIELD_ID,
             "row",
             rowSchema.asStruct(),

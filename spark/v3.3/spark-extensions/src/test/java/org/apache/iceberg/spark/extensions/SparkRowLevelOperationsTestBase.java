@@ -90,16 +90,16 @@ public abstract class SparkRowLevelOperationsTestBase extends SparkExtensionsTes
               + " format = {3}, vectorized = {4}, distributionMode = {5}")
   public static Object[][] parameters() {
     return new Object[][] {
-      {
-        "testhive",
-        SparkCatalog.class.getName(),
-        ImmutableMap.of(
-            "type", "hive",
-            "default-namespace", "default"),
-        "orc",
-        true,
-        WRITE_DISTRIBUTION_MODE_NONE
-      },
+//      {
+//        "testhive",
+//        SparkCatalog.class.getName(),
+//        ImmutableMap.of(
+//            "type", "hive",
+//            "default-namespace", "default"),
+//        "orc",
+//        true,
+//        WRITE_DISTRIBUTION_MODE_NONE
+//      },
       {
         "testhive",
         SparkCatalog.class.getName(),

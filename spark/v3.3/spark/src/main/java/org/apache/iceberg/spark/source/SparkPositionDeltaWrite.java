@@ -58,9 +58,7 @@ import org.apache.iceberg.io.PartitioningWriter;
 import org.apache.iceberg.io.PositionDeltaWriter;
 import org.apache.iceberg.io.WriteResult;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.CommitMetadata;
-import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkWriteConf;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.CharSequenceSet;
@@ -362,24 +360,6 @@ class SparkPositionDeltaWrite implements DeltaWrite, RequiresDistributionAndOrde
         return new PartitionedDeltaWriter(
             table, writerFactory, dataFileFactory, deleteFileFactory, context);
       }
-    }
-  }
-
-  private abstract static class BaseDeltaWriter implements DeltaWriter<InternalRow> {
-
-    protected InternalRowWrapper initPartitionRowWrapper(Types.StructType partitionType) {
-      StructType sparkPartitionType = (StructType) SparkSchemaUtil.convert(partitionType);
-      return new InternalRowWrapper(sparkPartitionType);
-    }
-
-    protected Map<Integer, StructProjection> buildPartitionProjections(
-        Types.StructType partitionType, Map<Integer, PartitionSpec> specs) {
-      Map<Integer, StructProjection> partitionProjections = Maps.newHashMap();
-      specs.forEach(
-          (specID, spec) ->
-              partitionProjections.put(
-                  specID, StructProjection.create(partitionType, spec.partitionType())));
-      return partitionProjections;
     }
   }
 
