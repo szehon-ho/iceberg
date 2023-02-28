@@ -175,21 +175,22 @@ public class TestGenericSortedPosDeleteWriter extends TableTestBase {
     List<Record> rowSet =
         Lists.newArrayList(createRow(0, "aaa"), createRow(1, "bbb"), createRow(2, "ccc"));
 
-    // Create a FileAppenderFactory which requires pos-delete row schema.
     FileAppenderFactory<Record> appenderFactory =
         new GenericAppenderFactory(table.schema(), table.spec(), null, null, table.schema());
     DataFile dataFile = prepareDataFile(appenderFactory, rowSet);
+    table.newAppend().appendFile(dataFile).commit();
 
     SortedPosDeleteWriter<Record> writer =
         new SortedPosDeleteWriter<>(appenderFactory, fileFactory, format, null, 1);
-    boolean caughtError = false;
-    try {
-      writer.delete(dataFile.path(), 0L);
-    } catch (Exception e) {
-      caughtError = true;
-    }
-    Assert.assertTrue(
-        "Should fail because the appender are required non-null rows to write", caughtError);
+    writer.delete(dataFile.path(), 0L);
+    List<DeleteFile> deletes = writer.complete();
+    table.newRowDelta().addDeletes(deletes.get(0)).commit();
+
+    List<Record> expectedData = Lists.newArrayList(createRow(1, "bbb"), createRow(2, "ccc"));
+    StructLikeSet expectedStruct = expectedRowSet(expectedData);
+    StructLikeSet actualStruct = actualRowSet("*");
+    Assert.assertEquals(
+        "Should have the expected records", expectedRowSet(expectedData), actualRowSet("*"));
   }
 
   @Test
