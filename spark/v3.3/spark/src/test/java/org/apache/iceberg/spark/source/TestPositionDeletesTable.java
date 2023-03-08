@@ -824,6 +824,83 @@ public class TestPositionDeletesTable extends SparkCatalogTestBase {
   }
 
   @Test
+  public void testWriteMixedRows() throws Exception {
+    String tableName = "write_mixed_rows";
+    PartitionSpec spec = PartitionSpec.builderFor(SCHEMA).identity("data").build();
+    Table tab = createTable(tableName, SCHEMA, spec);
+
+    DataFile dataFileA = dataFile(tab, "a");
+    DataFile dataFileB = dataFile(tab, "b");
+    tab.newAppend().appendFile(dataFileA).appendFile(dataFileB).commit();
+
+    // Add a delete file with row and without row
+    List<Pair<CharSequence, Long>> deletes = Lists.newArrayList();
+    deletes.add(Pair.of(dataFileA.path(), 0L));
+    deletes.add(Pair.of(dataFileA.path(), 1L));
+    Pair<DeleteFile, CharSequenceSet> deletesWithoutRow =
+        FileHelpers.writeDeleteFile(
+            tab, Files.localOutput(temp.newFile()), TestHelpers.Row.of("a"), deletes);
+
+    Pair<List<PositionDelete<?>>, DeleteFile> deletesWithRow = deleteFile(tab, dataFileB, "b");
+
+    tab.newRowDelta()
+        .addDeletes(deletesWithoutRow.first())
+        .addDeletes(deletesWithRow.second())
+        .commit();
+
+    Table posDeletesTable =
+        MetadataTableUtils.createMetadataTableInstance(tab, MetadataTableType.POSITION_DELETES);
+    String posDeletesTableName = catalogName + ".default." + tableName + ".position_deletes";
+    try (CloseableIterable<ScanTask> tasks = posDeletesTable.newBatchScan().planFiles()) {
+      String fileSetID = UUID.randomUUID().toString();
+      stageTask(tab, fileSetID, tasks);
+
+      Dataset<Row> scanDF =
+          spark
+              .read()
+              .format("iceberg")
+              .option(SparkReadOptions.FILE_SCAN_TASK_SET_ID, fileSetID)
+              .load(posDeletesTableName);
+      Assert.assertEquals(1, scanDF.javaRDD().getNumPartitions());
+      scanDF
+          .writeTo(posDeletesTableName)
+          .option(SparkWriteOptions.REWRITTEN_FILE_SCAN_TASK_SET_ID, fileSetID)
+          .append();
+
+      commit(tab, posDeletesTable, fileSetID, 2);
+    }
+
+    // Compare values without 'delete_file_path' as these have been rewritten
+    StructLikeSet actual =
+        actual(
+            tableName,
+            tab,
+            null,
+            ImmutableList.of("file_path", "pos", "row", "partition", "spec_id"));
+
+    // Prepare expected values
+    GenericRecord partitionRecordTemplate = GenericRecord.create(tab.spec().partitionType());
+    Record partitionA = partitionRecordTemplate.copy("data", "a");
+    Record partitionB = partitionRecordTemplate.copy("data", "b");
+    StructLikeSet allExpected =
+        StructLikeSet.create(
+            TypeUtil.selectNot(
+                    posDeletesTable.schema(), ImmutableSet.of(MetadataColumns.FILE_PATH_COLUMN_ID))
+                .asStruct());
+    allExpected.addAll(
+        expected(
+            tab,
+            Lists.newArrayList(
+                positionDelete(dataFileA.path(), 0L), positionDelete(dataFileA.path(), 1L)),
+            partitionA,
+            null));
+    allExpected.addAll(expected(tab, deletesWithRow.first(), partitionB, null));
+
+    Assert.assertEquals("Position Delete table should contain expected rows", allExpected, actual);
+    dropTable(tableName);
+  }
+
+  @Test
   public void testWritePartitionEvolutionAdd() throws Exception {
     // Create unpartitioned table
     String tableName = "write_partition_evolution_add";
@@ -1404,7 +1481,11 @@ public class TestPositionDeletesTable extends SparkCatalogTestBase {
   }
 
   private void commit(
-      Table baseTab, Table posDeletesTable, String fileSetID, int expectedFileSize) {
+      Table baseTab,
+      Table posDeletesTable,
+      String fileSetID,
+      int expectedSourceFiles,
+      int expectedTargetFiles) {
     PositionDeletesRewriteCoordinator rewriteCoordinator = PositionDeletesRewriteCoordinator.get();
     Set<DeleteFile> rewrittenFiles =
         PositionDeletesScanTaskSetManager.get().fetchTasks(posDeletesTable, fileSetID).stream()
@@ -1413,8 +1494,8 @@ public class TestPositionDeletesTable extends SparkCatalogTestBase {
     Set<DeleteFile> addedFiles = rewriteCoordinator.fetchNewDataFiles(posDeletesTable, fileSetID);
 
     // Assert new files and old files are equal in number but different in paths
-    Assert.assertEquals(expectedFileSize, addedFiles.size());
-    Assert.assertEquals(expectedFileSize, rewrittenFiles.size());
+    Assert.assertEquals(expectedSourceFiles, rewrittenFiles.size());
+    Assert.assertEquals(expectedTargetFiles, addedFiles.size());
 
     List<String> sortedAddedFiles =
         addedFiles.stream().map(f -> f.path().toString()).sorted().collect(Collectors.toList());
@@ -1426,5 +1507,9 @@ public class TestPositionDeletesTable extends SparkCatalogTestBase {
         .newRewrite()
         .rewriteFiles(ImmutableSet.of(), rewrittenFiles, ImmutableSet.of(), addedFiles)
         .commit();
+  }
+
+  private void commit(Table baseTab, Table posDeletesTable, String fileSetID, int expectedFiles) {
+    commit(baseTab, posDeletesTable, fileSetID, expectedFiles, expectedFiles);
   }
 }

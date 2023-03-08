@@ -61,6 +61,7 @@ import org.apache.iceberg.io.RollingDataWriter;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
+import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.spark.CommitMetadata;
@@ -619,9 +620,9 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
     private final DeleteFile[] taskFiles;
     private final CharSequence[] referencedDataFiles;
 
-    DeleteTaskCommit(DeleteWriteResult result) {
-      this.taskFiles = result.deleteFiles().toArray(new DeleteFile[0]);
-      this.referencedDataFiles = result.referencedDataFiles().toArray(new CharSequence[0]);
+    DeleteTaskCommit(List<DeleteFile> deleteFiles, List<CharSequence> referencedDataFiles) {
+      this.taskFiles = deleteFiles.toArray(new DeleteFile[0]);
+      this.referencedDataFiles = referencedDataFiles.toArray(new CharSequence[0]);
     }
 
     // Reports bytesWritten and recordsWritten to the Spark output metrics.
@@ -913,7 +914,7 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
                 dsSchema.apply(MetadataColumns.DELETE_FILE_ROW_FIELD_NAME)
               });
 
-      SparkFileWriterFactory writerFactory =
+      SparkFileWriterFactory writerFactoryWithRow =
           SparkFileWriterFactory.builderFor(table)
               .dataFileFormat(format)
               .dataSchema(writeSchema)
@@ -923,13 +924,28 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
               .positionDeleteSparkType(deleteFileType)
               .build();
 
+      SparkFileWriterFactory writerFactoryWithoutRow =
+          SparkFileWriterFactory.builderFor(table)
+              .dataFileFormat(format)
+              .dataSchema(writeSchema)
+              .dataSparkType(dsSchema)
+              .deleteFileFormat(format)
+              .positionDeleteSparkType(deleteFileType)
+              .build();
+
       return new DeleteWriter(
-          table, writerFactory, deleteFileFactory, targetFileSize, writeSchema, dsSchema);
+          table,
+          writerFactoryWithRow,
+          writerFactoryWithoutRow,
+          deleteFileFactory,
+          targetFileSize,
+          dsSchema);
     }
   }
 
   private static class DeleteWriter implements DataWriter<InternalRow> {
-    private final ClusteredPositionDeleteWriter<InternalRow> delegate;
+    private final ClusteredPositionDeleteWriter<InternalRow> writerWithRow;
+    private final ClusteredPositionDeleteWriter<InternalRow> writerWithoutRow;
     private final PositionDelete<InternalRow> positionDelete;
     private final FileIO io;
     private final Map<Integer, PartitionSpec> specs;
@@ -944,17 +960,33 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
 
     private boolean closed = false;
 
+    /**
+     * Writer for position deletes metadata table.
+     *
+     * <p>Delete files need to either have 'row' as required field, or omit 'row' altogether, for
+     * delete file stats accuracy Hence, this is a fanout writer, redirecting rows with null 'row'
+     * to one delegate, and non-null 'row' to another
+     *
+     * @param table position deletes metadata table
+     * @param writerFactoryWithRow writer factory for deletes with non-null 'row'
+     * @param writerFactoryWithoutRow writer factory for deletes with null 'row'
+     * @param deleteFileFactory delete file factory
+     * @param targetFileSize target file size
+     * @param dsSchema schema of incoming dataset
+     */
     DeleteWriter(
         Table table,
-        SparkFileWriterFactory writerFactory,
+        SparkFileWriterFactory writerFactoryWithRow,
+        SparkFileWriterFactory writerFactoryWithoutRow,
         OutputFileFactory deleteFileFactory,
         long targetFileSize,
-        Schema writeSchema,
         StructType dsSchema) {
-
-      this.delegate =
+      this.writerWithRow =
           new ClusteredPositionDeleteWriter<>(
-              writerFactory, deleteFileFactory, table.io(), targetFileSize);
+              writerFactoryWithRow, deleteFileFactory, table.io(), targetFileSize);
+      this.writerWithoutRow =
+          new ClusteredPositionDeleteWriter<>(
+              writerFactoryWithoutRow, deleteFileFactory, table.io(), targetFileSize);
       this.positionDelete = PositionDelete.create();
       this.io = table.io();
       this.specs = table.specs();
@@ -992,30 +1024,48 @@ abstract class SparkWrite implements Write, RequiresDistributionAndOrdering {
       String file = record.getString(fileOrdinal);
       long position = record.getLong(positionOrdinal);
       InternalRow row = record.getStruct(rowOrdinal, rowSize);
-      positionDelete.set(file, position, row);
-      delegate.write(positionDelete, spec, partitionProjection);
+      if (row != null) {
+        positionDelete.set(file, position, row);
+        writerWithRow.write(positionDelete, spec, partitionProjection);
+      } else {
+        positionDelete.set(file, position, null);
+        writerWithoutRow.write(positionDelete, spec, partitionProjection);
+      }
     }
 
     @Override
     public WriterCommitMessage commit() throws IOException {
       close();
 
-      DeleteWriteResult result = delegate.result();
-      return new DeleteTaskCommit(result);
+      DeleteWriteResult resultWithRow = writerWithRow.result();
+      DeleteWriteResult resultWithoutRow = writerWithoutRow.result();
+      List<DeleteFile> allDeleteFiles =
+          Lists.newArrayList(
+              Iterables.concat(resultWithRow.deleteFiles(), resultWithoutRow.deleteFiles()));
+      List<CharSequence> allReferencedDataFiles =
+          Lists.newArrayList(
+              Iterables.concat(
+                  resultWithRow.referencedDataFiles(), resultWithoutRow.referencedDataFiles()));
+      return new DeleteTaskCommit(allDeleteFiles, allReferencedDataFiles);
     }
 
     @Override
     public void abort() throws IOException {
       close();
 
-      DeleteWriteResult result = delegate.result();
-      SparkCleanupUtil.deleteTaskFiles(io, result.deleteFiles());
+      DeleteWriteResult resultWithRow = writerWithRow.result();
+      DeleteWriteResult resultWithoutRow = writerWithoutRow.result();
+      SparkCleanupUtil.deleteTaskFiles(
+          io,
+          Lists.newArrayList(
+              Iterables.concat(resultWithRow.deleteFiles(), resultWithoutRow.deleteFiles())));
     }
 
     @Override
     public void close() throws IOException {
       if (!closed) {
-        delegate.close();
+        writerWithRow.close();
+        writerWithoutRow.close();
         this.closed = true;
       }
     }
