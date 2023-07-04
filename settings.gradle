@@ -42,6 +42,7 @@ include 'snowflake'
 include 'delta-lake'
 include 'kafka-connect'
 include 'open-api'
+include 'apple'
 
 project(':api').name = 'iceberg-api'
 project(':common').name = 'iceberg-common'
@@ -67,6 +68,7 @@ project(':snowflake').name = 'iceberg-snowflake'
 project(':delta-lake').name = 'iceberg-delta-lake'
 project(':kafka-connect').name = 'iceberg-kafka-connect'
 project(':open-api').name = 'iceberg-open-api'
+project(':apple').name = 'iceberg-apple'
 
 if (null != System.getProperty("allVersions")) {
   System.setProperty("flinkVersions", System.getProperty("knownFlinkVersions"))
