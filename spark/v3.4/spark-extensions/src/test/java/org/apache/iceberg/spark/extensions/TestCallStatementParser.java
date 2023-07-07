@@ -30,14 +30,12 @@ import org.apache.spark.sql.catalyst.expressions.Literal;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.catalyst.parser.ParseException;
 import org.apache.spark.sql.catalyst.parser.ParserInterface;
-import org.apache.spark.sql.catalyst.parser.extensions.IcebergParseException;
 import org.apache.spark.sql.catalyst.plans.logical.CallArgument;
 import org.apache.spark.sql.catalyst.plans.logical.CallStatement;
 import org.apache.spark.sql.catalyst.plans.logical.NamedArgument;
 import org.apache.spark.sql.catalyst.plans.logical.PositionalArgument;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
-import org.assertj.core.api.Assertions;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -140,13 +138,6 @@ public class TestCallStatementParser {
     Assert.assertEquals(1, call.args().size());
 
     checkArg(call, 0, "value", DataTypes.StringType);
-  }
-
-  @Test
-  public void testCallParseError() {
-    Assertions.assertThatThrownBy(() -> parser.parsePlan("CALL cat.system radish kebab"))
-        .isInstanceOf(IcebergParseException.class)
-        .hasMessageContaining("missing '(' at 'radish'");
   }
 
   @Test
