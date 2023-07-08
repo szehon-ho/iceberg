@@ -22,6 +22,7 @@ import static org.apache.iceberg.MetadataTableType.ALL_MANIFESTS;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.lit;
 
+import com.google.errorprone.annotations.FormatMethod;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -31,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import org.apache.iceberg.AllManifestsTable;
 import org.apache.iceberg.BaseTable;
@@ -218,6 +220,30 @@ abstract class BaseSparkAction<ThisT> {
 
   protected Dataset<Row> loadMetadataTable(Table table, MetadataTableType type) {
     return SparkTableUtil.loadMetadataTable(spark, table, type);
+  }
+
+  protected Dataset<Row> loadMetadataTable(
+      Table table, MetadataTableType type, Map<String, String> extraOptions) {
+    return SparkTableUtil.loadMetadataTable(spark, table, type, extraOptions);
+  }
+
+  protected <T, U> U withReusableDS(
+      Dataset<T> ds, boolean useCaching, Function<Dataset<T>, U> func) {
+
+    Dataset<T> reusableDS = useCaching ? ds.cache() : ds;
+
+    try {
+      return func.apply(reusableDS);
+    } finally {
+      if (useCaching) {
+        reusableDS.unpersist(false);
+      }
+    }
+  }
+
+  @FormatMethod
+  protected Column expr(String exprAsString, Object... args) {
+    return org.apache.spark.sql.functions.expr(String.format(exprAsString, args));
   }
 
   private Dataset<FileInfo> toFileInfoDS(List<String> paths, String type) {
