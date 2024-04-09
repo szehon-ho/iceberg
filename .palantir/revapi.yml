@@ -974,6 +974,22 @@ acceptedBreaks:
     - code: "java.class.removed"
       old: "interface org.apache.iceberg.rest.requests.UpdateTableRequest.UpdateRequirement"
       justification: "Removing deprecated code"
+    - code: "java.field.constantValueChanged"
+      old: "field org.apache.iceberg.TableProperties.MANIFEST_MERGE_ENABLED_DEFAULT"
+      new: "field org.apache.iceberg.TableProperties.MANIFEST_MERGE_ENABLED_DEFAULT"
+      justification: "Internal property changes"
+    - code: "java.field.constantValueChanged"
+      old: "field org.apache.iceberg.TableProperties.SNAPSHOT_ID_INHERITANCE_ENABLED_DEFAULT"
+      new: "field org.apache.iceberg.TableProperties.SNAPSHOT_ID_INHERITANCE_ENABLED_DEFAULT"
+      justification: "Internal property changes"
+    - code: "java.field.constantValueChanged"
+      old: "field org.apache.iceberg.actions.SizeBasedFileRewriter<T extends org.apache.iceberg.ContentScanTask<F\
+        \ extends org.apache.iceberg.ContentFile<F>>, F extends org.apache.iceberg.ContentFile<F\
+        \ extends org.apache.iceberg.ContentFile<F>>>.MIN_FILE_SIZE_DEFAULT_RATIO"
+      new: "field org.apache.iceberg.actions.SizeBasedFileRewriter<T extends org.apache.iceberg.ContentScanTask<F\
+        \ extends org.apache.iceberg.ContentFile<F>>, F extends org.apache.iceberg.ContentFile<F\
+        \ extends org.apache.iceberg.ContentFile<F>>>.MIN_FILE_SIZE_DEFAULT_RATIO"
+      justification: "Internal property changes"
     - code: "java.field.serialVersionUIDChanged"
       new: "field org.apache.iceberg.util.SerializableMap<K, V>.serialVersionUID"
       justification: "Serialization is not be used"
