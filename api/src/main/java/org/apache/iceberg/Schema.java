@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.iceberg.relocated.com.google.common.base.Joiner;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
@@ -34,6 +35,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableBiMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.relocated.com.google.common.primitives.Ints;
 import org.apache.iceberg.types.Type;
@@ -65,6 +67,8 @@ public class Schema implements Serializable {
   private transient Map<Integer, Accessor<StructLike>> idToAccessor = null;
   private transient Map<Integer, String> idToName = null;
   private transient Set<Integer> identifierFieldIdSet = null;
+  private transient Map<Integer, Integer> idsToReassigned = Maps.newHashMap();
+  private transient Map<Integer, Integer> idsToOriginal = Maps.newHashMap();
 
   public Schema(List<NestedField> columns, Map<String, Integer> aliases) {
     this(columns, aliases, ImmutableSet.of());
@@ -97,7 +101,9 @@ public class Schema implements Serializable {
       Map<String, Integer> aliases,
       Set<Integer> identifierFieldIds) {
     this.schemaId = schemaId;
-    this.struct = StructType.of(columns);
+
+    List<NestedField> finalColumns = reassignMetadataFields(columns);
+    this.struct = StructType.of(finalColumns);
     this.aliasToId = aliases != null ? ImmutableBiMap.copyOf(aliases) : null;
 
     // validate IdentifierField
@@ -506,5 +512,47 @@ public class Schema implements Serializable {
             struct.fields().stream()
                 .map(this::identifierFieldToString)
                 .collect(Collectors.toList())));
+  }
+
+  /**
+   * Ids of {@link MetadataField} are reassigned.
+   * @return map of old to new field ids
+   */
+  public Map<Integer, Integer> idsToReassigned() {
+    return idsToReassigned;
+  }
+
+    /**
+   * Ids of {@link MetadataField} are reassigned.
+   * @return map of new to old field ids
+   */
+  public Map<Integer, Integer> idsToOriginal() {
+    return idsToOriginal;
+  }
+
+  private List<NestedField> reassignMetadataFields(List<NestedField> columns) {
+    List<NestedField> permanentFields = columns.stream()
+        .filter(c -> !(c instanceof MetadataField))
+        .collect(Collectors.toList());
+    Set<Integer> usedIds = Sets.newHashSet(TypeUtil.indexById(StructType.of(permanentFields)).keySet());
+    AtomicInteger nextId = new AtomicInteger();
+
+    return columns.stream().map(c -> {
+      if (c instanceof MetadataField) {
+        Type myRes = TypeUtil.assignIds(StructType.of(c), oldId -> {
+          int res = nextId.get();
+          while (usedIds.contains(res)) {
+            res = nextId.incrementAndGet();
+          }
+          usedIds.add(res);
+          idsToReassigned.put(oldId, res);
+          idsToOriginal.put(res, oldId);
+          return res;
+        });
+        return myRes.asStructType().fields().get(0);
+      } else {
+        return c;
+      }
+    }).collect(Collectors.toList());
   }
 }

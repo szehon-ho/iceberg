@@ -443,7 +443,7 @@ public class Types {
     private final Type type;
     private final String doc;
 
-    private NestedField(boolean isOptional, int id, String name, Type type, String doc) {
+    protected NestedField(boolean isOptional, int id, String name, Type type, String doc) {
       Preconditions.checkNotNull(name, "Name cannot be null");
       Preconditions.checkNotNull(type, "Type cannot be null");
       this.isOptional = isOptional;

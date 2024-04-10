@@ -185,8 +185,7 @@ public class TestMetadataTableScansWithPartitionEvolution extends MetadataTableS
     ScanTask task = tasks.get(0);
     assertThat(task).isInstanceOf(PositionDeletesScanTask.class);
 
-    Types.StructType partitionType =
-        PositionDeletesTable.partitionType(table.schema(), Partitioning.partitionType(table));
+    Types.StructType partitionType = positionDeletesTable.spec().partitionType();
     PositionDeletesScanTask posDeleteTask = (PositionDeletesScanTask) task;
 
     int filePartition = posDeleteTask.file().partition().get(0, Integer.class);

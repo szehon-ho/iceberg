@@ -139,10 +139,12 @@ public class RewritePositionDeleteFilesSparkAction
   }
 
   private StructLikeMap<List<List<PositionDeletesScanTask>>> planFileGroups() {
-    CloseableIterable<PositionDeletesScanTask> fileTasks = planFiles();
+    Table deletesTable =
+        MetadataTableUtils.createMetadataTableInstance(table, MetadataTableType.POSITION_DELETES);
+    CloseableIterable<PositionDeletesScanTask> fileTasks = planFiles(deletesTable);
 
     try {
-      StructType partitionType = Partitioning.partitionType(table);
+      StructType partitionType = Partitioning.partitionType(deletesTable);
       StructLikeMap<List<PositionDeletesScanTask>> fileTasksByPartition =
           groupByPartition(partitionType, fileTasks);
       return fileGroupsByPartition(fileTasksByPartition);
@@ -155,10 +157,7 @@ public class RewritePositionDeleteFilesSparkAction
     }
   }
 
-  private CloseableIterable<PositionDeletesScanTask> planFiles() {
-    Table deletesTable =
-        MetadataTableUtils.createMetadataTableInstance(table, MetadataTableType.POSITION_DELETES);
-
+  private CloseableIterable<PositionDeletesScanTask> planFiles(Table deletesTable) {
     PositionDeletesBatchScan scan = (PositionDeletesBatchScan) deletesTable.newBatchScan();
     return CloseableIterable.transform(
         scan.baseTableFilter(filter).ignoreResiduals().planFiles(),
@@ -460,7 +459,6 @@ public class RewritePositionDeleteFilesSparkAction
   }
 
   private StructLike coercePartition(PositionDeletesScanTask task, StructType partitionType) {
-    Types.StructType dedupType = PositionDeletesTable.partitionType(table.schema(), partitionType);
-    return PartitionUtil.coercePartition(dedupType, task.spec(), task.partition());
+    return PartitionUtil.coercePartition(partitionType, task.spec(), task.partition());
   }
 }

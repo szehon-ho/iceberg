@@ -1266,8 +1266,7 @@ public class TestMetadataTableScans extends MetadataTableScanTestBase {
     ScanTask task = tasks.get(0);
     assertThat(task).isInstanceOf(PositionDeletesScanTask.class);
 
-    Types.StructType partitionType =
-        PositionDeletesTable.partitionType(table.schema(), Partitioning.partitionType(table));
+    Types.StructType partitionType = positionDeletesTable.spec().partitionType();
     PositionDeletesScanTask posDeleteTask = (PositionDeletesScanTask) task;
 
     int filePartition = posDeleteTask.file().partition().get(0, Integer.class);
@@ -1334,8 +1333,7 @@ public class TestMetadataTableScans extends MetadataTableScanTestBase {
     ScanTask task = tasks.get(0);
     assertThat(task).isInstanceOf(PositionDeletesScanTask.class);
 
-    Types.StructType partitionType =
-        PositionDeletesTable.partitionType(table.schema(), Partitioning.partitionType(table));
+    Types.StructType partitionType = table.spec().partitionType();
     PositionDeletesScanTask posDeleteTask = (PositionDeletesScanTask) task;
 
     // base table filter should only be used to evaluate partitions
@@ -1417,8 +1415,7 @@ public class TestMetadataTableScans extends MetadataTableScanTestBase {
     ScanTask task = tasks.get(0);
     assertThat(task).isInstanceOf(PositionDeletesScanTask.class);
 
-    Types.StructType partitionType =
-        PositionDeletesTable.partitionType(table.schema(), Partitioning.partitionType(table));
+    Types.StructType partitionType = positionDeletesTable.spec().partitionType();
     PositionDeletesScanTask posDeleteTask = (PositionDeletesScanTask) task;
 
     // base table filter should only be used to evaluate partitions
