@@ -918,9 +918,15 @@ project(':iceberg-nessie') {
     compileOnly libs.microprofile.openapi.api
 
     if (JavaVersion.current().isJava11Compatible()) {
-      testImplementation libs.nessie.jaxrs.testextension
-      testImplementation libs.nessie.versioned.storage.inmemory.tests
-      testImplementation libs.nessie.versioned.storage.testextension
+      testImplementation(libs.nessie.jaxrs.testextension) {
+        exclude group: 'com.fasterxml.jackson'
+      }
+      testImplementation(libs.nessie.versioned.storage.inmemory.tests) {
+        exclude group: 'com.fasterxml.jackson'
+      }
+      testImplementation(libs.nessie.versioned.storage.testextension) {
+        exclude group: 'com.fasterxml.jackson'
+      }
       // Need to "pull in" el-api explicitly :(
       testImplementation libs.jakarta.el.api
 
