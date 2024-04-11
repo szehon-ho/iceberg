@@ -36,10 +36,9 @@ class AssignIds extends TypeUtil.CustomOrderSchemaVisitor<Type> {
     this.getID = getID;
   }
 
-  private int idFor(int oldId) {
-    return getID.get(oldId);
+  private int idFor(int id) {
+    return getID.get(id);
   }
-
 
   @Override
   public Type schema(Schema schema, Supplier<Type> future) {
@@ -53,8 +52,8 @@ class AssignIds extends TypeUtil.CustomOrderSchemaVisitor<Type> {
 
     // assign IDs for this struct's fields first
     List<Integer> newIds = Lists.newArrayListWithExpectedSize(length);
-    for (int i = 0; i < length; i += 1) {
-      newIds.add(idFor(fields.get(i).fieldId()));
+    for (Types.NestedField field : fields) {
+      newIds.add(idFor(field.fieldId()));
     }
 
     List<Types.NestedField> newFields = Lists.newArrayListWithExpectedSize(length);

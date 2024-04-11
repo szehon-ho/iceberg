@@ -24,9 +24,9 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import org.apache.iceberg.expressions.Evaluator;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.ManifestEvaluator;
@@ -35,8 +35,7 @@ import org.apache.iceberg.expressions.ResidualEvaluator;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.CloseableIterator;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
-import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
-import org.apache.iceberg.relocated.com.google.common.collect.Iterators;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
@@ -63,8 +62,7 @@ public class PositionDeletesTable extends BaseMetadataTable {
 
   PositionDeletesTable(Table table, String name) {
     super(table, name);
-    Types.StructType partitionType = Partitioning.partitionType(table());
-    this.schema = calculateSchema(partitionType);
+    this.schema = calculateSchema();
     this.defaultSpecId = table.spec().specId();
     this.specs = transformSpecs(schema(), table.specs());
   }
@@ -110,33 +108,37 @@ public class PositionDeletesTable extends BaseMetadataTable {
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
   }
 
-  private Schema calculateSchema(
-      Types.StructType partitionType) {
+  private Schema calculateSchema() {
+    Types.StructType partitionType = Partitioning.partitionType(table());
+    Set<Integer> metadataFieldIds =
+        partitionType.fields().stream().map(Types.NestedField::fieldId).collect(Collectors.toSet());
     Schema result =
         new Schema(
-            MetadataColumns.DELETE_FILE_PATH,
-            MetadataColumns.DELETE_FILE_POS,
-            Types.NestedField.optional(
-                MetadataColumns.DELETE_FILE_ROW_FIELD_ID,
-                MetadataColumns.DELETE_FILE_ROW_FIELD_NAME,
-                table().schema().asStruct(),
-                MetadataColumns.DELETE_FILE_ROW_DOC),
-            new MetadataField(
-                true,
-                MetadataColumns.PARTITION_COLUMN_ID,
-                PARTITION,
-                partitionType,
-                "Partition that position delete row belongs to"),
-            Types.NestedField.required(
-                MetadataColumns.SPEC_ID_COLUMN_ID,
-                SPEC_ID,
-                Types.IntegerType.get(),
-                MetadataColumns.SPEC_ID_COLUMN_DOC),
-            Types.NestedField.required(
-                MetadataColumns.FILE_PATH_COLUMN_ID,
-                DELETE_FILE_PATH,
-                Types.StringType.get(),
-                MetadataColumns.FILE_PATH_COLUMN_DOC));
+            ImmutableList.of(
+                MetadataColumns.DELETE_FILE_PATH,
+                MetadataColumns.DELETE_FILE_POS,
+                Types.NestedField.optional(
+                    MetadataColumns.DELETE_FILE_ROW_FIELD_ID,
+                    MetadataColumns.DELETE_FILE_ROW_FIELD_NAME,
+                    table().schema().asStruct(),
+                    MetadataColumns.DELETE_FILE_ROW_DOC),
+                Types.NestedField.required(
+                    MetadataColumns.PARTITION_COLUMN_ID,
+                    PARTITION,
+                    partitionType,
+                    "Partition that position delete row belongs to"),
+                Types.NestedField.required(
+                    MetadataColumns.SPEC_ID_COLUMN_ID,
+                    SPEC_ID,
+                    Types.IntegerType.get(),
+                    MetadataColumns.SPEC_ID_COLUMN_DOC),
+                Types.NestedField.required(
+                    MetadataColumns.FILE_PATH_COLUMN_ID,
+                    DELETE_FILE_PATH,
+                    Types.StringType.get(),
+                    MetadataColumns.FILE_PATH_COLUMN_DOC)),
+            ImmutableSet.of(),
+            metadataFieldIds);
 
     if (!partitionType.fields().isEmpty()) {
       return result;
@@ -147,37 +149,6 @@ public class PositionDeletesTable extends BaseMetadataTable {
     }
   }
 
-//  /**
-//   * Handle collisions between table and partition field ids, as both need to be part of position
-//   * deletes table
-//   *
-//   * @param tableSchema original table schema
-//   * @param partitionType original table's partition type
-//   * @return partition type with reassigned field ids
-//   */
-//  public static Types.StructType partitionType(Schema tableSchema, Types.StructType partitionType) {
-//    Map<Integer, Integer> fieldMap = partitionFieldMap(tableSchema, partitionType);
-//    return partitionType(partitionType, fieldMap);
-//  }
-//
-//  // Handle collisions between table field and partition field ids
-//  static Map<Integer, Integer> partitionFieldMap(
-//      Schema tableSchema, Types.StructType partitionType) {
-//    AtomicInteger nextId = new AtomicInteger(tableSchema.highestFieldId());
-//    return partitionType.fields().stream()
-//        .collect(Collectors.toMap(Types.NestedField::fieldId, f -> nextId.incrementAndGet()));
-//  }
-//  static Types.StructType partitionType(
-//      Types.StructType partitionType, Map<Integer, Integer> fieldMap) {
-//    return Types.StructType.of(
-//        partitionType.fields().stream()
-//            .map(
-//                f ->
-//                    Types.NestedField.of(
-//                        fieldMap.get(f.fieldId()), f.isOptional(), f.name(), f.type(), f.doc()))
-//            .collect(Collectors.toList()));
-//  }
-
   public static class PositionDeletesBatchScan
       extends SnapshotScan<BatchScan, ScanTask, ScanTaskGroup<ScanTask>> implements BatchScan {
 
@@ -185,11 +156,7 @@ public class PositionDeletesTable extends BaseMetadataTable {
 
     protected PositionDeletesBatchScan(Table table, Schema schema) {
       super(table, schema, TableScanContext.empty());
-     }
-
-    protected PositionDeletesBatchScan(Table table, Schema schema, TableScanContext context) {
-      super(table, schema, context);
-     }
+    }
 
     protected PositionDeletesBatchScan(
         Table table, Schema schema, TableScanContext context, Expression baseTableFilter) {
@@ -200,8 +167,7 @@ public class PositionDeletesTable extends BaseMetadataTable {
     @Override
     protected PositionDeletesBatchScan newRefinedScan(
         Table newTable, Schema newSchema, TableScanContext newContext) {
-      return new PositionDeletesBatchScan(
-          newTable, newSchema, newContext, baseTableFilter);
+      return new PositionDeletesBatchScan(newTable, newSchema, newContext, baseTableFilter);
     }
 
     @Override
@@ -244,8 +210,9 @@ public class PositionDeletesTable extends BaseMetadataTable {
     @Override
     protected CloseableIterable<ScanTask> doPlanFiles() {
       String schemaString = SchemaParser.toJson(tableSchema());
-      Map<Integer, PartitionSpec> transformedSpecs =
-          transformSpecs(tableSchema(), table().specs());
+
+      // prepare transformed partition specs and caches
+      Map<Integer, PartitionSpec> transformedSpecs = transformSpecs(tableSchema(), table().specs());
 
       LoadingCache<Integer, String> specStringCache =
           partitionCacheOf(transformedSpecs, PartitionSpecParser::toJson);
@@ -319,39 +286,24 @@ public class PositionDeletesTable extends BaseMetadataTable {
 
         @Override
         public CloseableIterator<ScanTask> iterator() {
-          // Partition filter by base table filter
           Expression partitionFilter =
               Projections.inclusive(spec, isCaseSensitive()).project(baseTableFilter);
 
-          // Read manifests (use original table's partition ids to de-serialize partition values)
+          // Filter partitions
           CloseableIterable<ManifestEntry<DeleteFile>> deleteFileEntries =
               ManifestFiles.readDeleteManifest(manifest, table().io(), transformedSpecs)
                   .caseSensitive(isCaseSensitive())
                   .select(scanColumns())
-                  .filterPartitions(partitionFilter)
                   .filterRows(filter())
+                  .filterPartitions(partitionFilter)
                   .scanMetrics(scanMetrics())
                   .liveEntries();
 
-          // Partition Filter by metadata table filter (bind on transformed spec/schema)
-//          PartitionSpec transformedSpec = transformedSpecs.get(spec.specId());
-//          Expression projected =
-//              Projections.inclusive(transformedSpec, isCaseSensitive()).project(filter());
-//          Evaluator eval =
-//              new Evaluator(transformedSpec.partitionType(), projected, isCaseSensitive());
-//          deleteFileEntries =
-//              CloseableIterable.filter(
-//                  deleteFileEntries, entry -> eval.eval(entry.file().partition()));
-
-          ImmutableList<ManifestEntry<DeleteFile>> list = ImmutableList.copyOf(deleteFileEntries);
-
-          // Filter by delete file type
+          // Filter delete file type
           CloseableIterable<ManifestEntry<DeleteFile>> positionDeleteEntries =
               CloseableIterable.filter(
                   deleteFileEntries,
                   entry -> entry.file().content().equals(FileContent.POSITION_DELETES));
-
-          ImmutableList<ManifestEntry<DeleteFile>> list2 = ImmutableList.copyOf(positionDeleteEntries);
 
           this.iterable =
               CloseableIterable.transform(

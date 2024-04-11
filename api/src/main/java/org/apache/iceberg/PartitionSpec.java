@@ -153,10 +153,9 @@ public class PartitionSpec implements Serializable {
           for (PartitionField field : fields) {
             Type sourceType = schema.findType(field.sourceId());
             Type resultType = field.transform().getResultType(sourceType);
-            structFields.add(Types.NestedField.optional(
-                schema.idsToOriginal().get(field.fieldId()),
-                field.name(),
-                resultType));
+            structFields.add(
+                Types.NestedField.optional(
+                    schema.idsToOriginal().get(field.fieldId()), field.name(), resultType));
           }
 
           this.lazyOriginalPartitionType = Types.StructType.of(structFields);

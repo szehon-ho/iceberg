@@ -68,8 +68,7 @@ public abstract class BaseMetadataTable extends BaseReadOnlyTable implements Ser
    * @return a spec used to rewrite the metadata table filters to partition filters using an
    *     inclusive projection
    */
-  static PartitionSpec transformSpec(
-      Schema metadataTableSchema, PartitionSpec spec) {
+  static PartitionSpec transformSpec(Schema metadataTableSchema, PartitionSpec spec) {
     PartitionSpec.Builder builder =
         PartitionSpec.builderFor(metadataTableSchema)
             .withSpecId(spec.specId())
@@ -96,8 +95,7 @@ public abstract class BaseMetadataTable extends BaseReadOnlyTable implements Ser
    *     inclusive projection
    */
   static Map<Integer, PartitionSpec> transformSpecs(
-      Schema metadataTableSchema,
-      Map<Integer, PartitionSpec> specs) {
+      Schema metadataTableSchema, Map<Integer, PartitionSpec> specs) {
     return specs.values().stream()
         .map(spec -> transformSpec(metadataTableSchema, spec))
         .collect(Collectors.toMap(PartitionSpec::specId, spec -> spec));
