@@ -51,6 +51,7 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.EnvironmentContext;
+import org.apache.hadoop.hive.metastore.api.LockComponent;
 import org.apache.hadoop.hive.metastore.api.LockRequest;
 import org.apache.hadoop.hive.metastore.api.LockResponse;
 import org.apache.hadoop.hive.metastore.api.LockState;
@@ -70,6 +71,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.types.Types;
 import org.apache.thrift.TException;
+import org.junit.Assert;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -610,5 +612,38 @@ public class TestHiveCommitLocks {
         .isEqualTo(context.get("expected_parameter_key"));
     assertThat(metadataV2.metadataFileLocation())
         .isEqualTo(context.get("expected_parameter_value"));
+  }
+
+  @Test
+  public void testLockIncludeCatalogName() throws Exception {
+    Configuration confWithLock = new Configuration(overriddenHiveConf);
+    confWithLock.setBoolean("iceberg.hive.lock-include-catalog-name", true);
+    confWithLock.set(HiveCatalog.HIVE_CONF_CATALOG, "my_catalog");
+
+    ArgumentCaptor<LockRequest> lockRequestCaptor = ArgumentCaptor.forClass(LockRequest.class);
+    doReturn(acquiredLockResponse).when(spyClient).lock(lockRequestCaptor.capture());
+    doNothing().when(spyClient).heartbeat(eq(0L), eq(dummyLockId));
+
+    HiveTableOperations mySpyOps =
+        spy(
+            new HiveTableOperations(
+                confWithLock,
+                spyCachedClientPool,
+                ops.io(),
+                ops.encryptionManagerFactory(),
+                catalog.name(),
+                TABLE_IDENTIFIER.namespace().level(0),
+                TABLE_IDENTIFIER.name()));
+    mySpyOps.doCommit(metadataV2, metadataV1);
+
+    // Make sure that the lock includes catalog in the name.
+    LockRequest request = lockRequestCaptor.getValue();
+    Assert.assertEquals(1, request.getComponentSize());
+
+    LockComponent component = request.getComponent().get(0);
+    Assert.assertEquals("my_catalog." + DB_NAME, component.getDbname());
+    Assert.assertEquals(TABLE_NAME, component.getTablename());
+
+    verify(spyClient, times(1)).unlock(eq(dummyLockId));
   }
 }
