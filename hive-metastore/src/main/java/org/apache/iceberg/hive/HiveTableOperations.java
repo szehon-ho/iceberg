@@ -44,6 +44,7 @@ import org.apache.iceberg.SnapshotSummary;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.encryption.EncryptionManagerFactory;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
@@ -105,18 +106,21 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
   private final long maxHiveTablePropertySize;
   private final int metadataRefreshMaxRetries;
   private final FileIO fileIO;
+  private final EncryptionManagerFactory encryptionManagerFactory;
   private final ClientPool<IMetaStoreClient, TException> metaClients;
 
   protected HiveTableOperations(
       Configuration conf,
       ClientPool<IMetaStoreClient, TException> metaClients,
       FileIO fileIO,
+      EncryptionManagerFactory encryptionManagerFactory,
       String catalogName,
       String database,
       String table) {
     this.conf = conf;
     this.metaClients = metaClients;
     this.fileIO = fileIO;
+    this.encryptionManagerFactory = encryptionManagerFactory;
     this.fullName = catalogName + "." + database + "." + table;
     this.catalogName = catalogName;
     this.database = database;
@@ -137,6 +141,11 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
   @Override
   public FileIO io() {
     return fileIO;
+  }
+
+  @Override
+  protected EncryptionManagerFactory encryptionManagerFactory() {
+    return encryptionManagerFactory;
   }
 
   @Override
