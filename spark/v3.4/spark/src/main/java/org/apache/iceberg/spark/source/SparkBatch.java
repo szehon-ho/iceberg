@@ -113,13 +113,8 @@ class SparkBatch implements Batch {
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    if (useParquetBatchReads()) {
-      int batchSize = readConf.parquetBatchSize();
-      return new SparkColumnarReaderFactory(batchSize);
-
-    } else if (useOrcBatchReads()) {
-      int batchSize = readConf.orcBatchSize();
-      return new SparkColumnarReaderFactory(batchSize);
+    if (useParquetBatchReads() || useOrcBatchReads()) {
+      return new SparkColumnarReaderFactory(readConf.batchReadConf());
 
     } else {
       return new SparkRowReaderFactory();
