@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
@@ -189,7 +190,7 @@ public class TestMetadataTableScansWithPartitionEvolution extends MetadataTableS
     ScanTask task = tasks.get(0);
     assertThat(task).isInstanceOf(PositionDeletesScanTask.class);
 
-    Types.StructType partitionType = Partitioning.partitionType(table);
+    Types.StructType partitionType = positionDeletesTable.spec().partitionType();
     PositionDeletesScanTask posDeleteTask = (PositionDeletesScanTask) task;
 
     int filePartition = posDeleteTask.file().partition().get(0, Integer.class);
@@ -199,29 +200,25 @@ public class TestMetadataTableScansWithPartitionEvolution extends MetadataTableS
     int taskConstantPartition =
         ((StructLike)
                 constantsMap(posDeleteTask, partitionType).get(MetadataColumns.PARTITION_COLUMN_ID))
-            .get(1, Integer.class);
-    Assert.assertEquals("Expected correct partition on constant column", 1, taskConstantPartition);
-
-    Assert.assertEquals(
-        "Expected correct partition field id on task's spec",
-        table.ops().current().spec().partitionType().fields().get(0).fieldId(),
-        posDeleteTask.spec().fields().get(0).fieldId());
-
-    Assert.assertEquals(
-        "Expected correct partition spec id on task",
-        table.ops().current().spec().specId(),
-        posDeleteTask.file().specId());
-    Assert.assertEquals(
-        "Expected correct partition spec id on constant column",
-        table.ops().current().spec().specId(),
-        constantsMap(posDeleteTask, partitionType).get(MetadataColumns.SPEC_ID.fieldId()));
-
-    Assert.assertEquals(
-        "Expected correct delete file on task", deleteFile.path(), posDeleteTask.file().path());
-    Assert.assertEquals(
-        "Expected correct delete file on constant column",
-        deleteFile.path(),
-        constantsMap(posDeleteTask, partitionType).get(MetadataColumns.FILE_PATH.fieldId()));
+            .get(0, Integer.class);
+    assertThat(taskConstantPartition)
+        .as("Expected correct partition on constant column")
+        .isEqualTo(1);
+    assertThat(posDeleteTask.spec().fields().get(0).fieldId())
+        .as("Expected correct partition field id on task's spec")
+        .isEqualTo(partitionType.fields().get(0).fieldId());
+    assertThat(posDeleteTask.file().specId())
+        .as("Expected correct partition spec id on task")
+        .isEqualTo(table.ops().current().spec().specId());
+    assertThat((Map<Integer, Integer>) constantsMap(posDeleteTask, partitionType))
+        .as("Expected correct partition spec id on constant column")
+        .containsEntry(MetadataColumns.SPEC_ID.fieldId(), table.ops().current().spec().specId());
+    assertThat(posDeleteTask.file().path())
+        .as("Expected correct delete file on task")
+        .isEqualTo(deleteFile.path());
+    assertThat((Map<Integer, String>) constantsMap(posDeleteTask, partitionType))
+        .as("Expected correct delete file on constant column")
+        .containsEntry(MetadataColumns.FILE_PATH.fieldId(), deleteFile.path().toString());
   }
 
   @Test
