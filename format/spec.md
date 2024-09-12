@@ -200,16 +200,16 @@ Supported primitive types are defined in the table below. Primitive types added 
 |                  | **`uuid`**         | Universally unique identifiers                                           | Should use 16-byte fixed                         |
 |                  | **`fixed(L)`**     | Fixed-length byte array of length L                                      |                                                  |
 |                  | **`binary`**       | Arbitrary-length byte array                                              |                                                  |
-| [v3](#version-3) | **`geometry(C, CE, E)`** | An object of the simple feature geometry model as defined by Appendix G; This may be any of the Geometry subclasses defined therein; coordinate reference system C [4], coordinate reference system encoding CE [5], edges E [6] | C, CE, E are fixed, and if unset will take default values. Encoded as WKB, see Appendix G. |
+| [v3](#version-3) | **`geometry(C, CE, E)`** | An object of the simple feature geometry model as defined by Appendix G; This may be any of the geometry subclasses defined therein; crs C [4], crs-encoding CE [5], edges E [6] | C, CE, E are fixed, and if unset will take default values. Encoded as WKB, see Appendix G. |
 
 Notes:
 
 1. Timestamp values _without time zone_ represent a date and time of day regardless of zone: the time value is independent of zone adjustments (`2017-11-16 17:10:34` is always retrieved as `2017-11-16 17:10:34`).
 2. Timestamp values _with time zone_ represent a point in time: values are stored as UTC and do not retain a source time zone (`2017-11-16 17:10:34 PST` is stored/retrieved as `2017-11-17 01:10:34 UTC` and these values are considered identical).
 3. Character strings must be stored as UTF-8 encoded byte arrays.
-4. Crs (coordinate reference system), i.e. mapping of how coordinates refer to precise locations on earth. Defaults to "OGC:CRS84". Fixed and cannot be changed by schema evolution.
-5. Crs-encoding, value specifying type of crs field. Must be set if crs is set. Defaults to "PROJJSON". Fixed and cannot be changed by schema evolution.
-6. Edges, value specifying interpretation for edges within geometry object, i.e. whether the edge between points represent a straight cartesian line or the shortest line on the sphere. This applies to all non-point geometry objects. Defaults to "planar". Fixed and cannot be changed by schema evolution.
+4. Crs (coordinate reference system) is a mapping of how coordinates refer to precise locations on earth. Defaults to "OGC:CRS84". Fixed and cannot be changed by schema evolution.
+5. Crs-encoding (coordinate reference system encoding) is the type of crs field. Must be set if crs is set. Defaults to "PROJJSON". Fixed and cannot be changed by schema evolution.
+6. Edges is the interpretation for non-point geometries in geometry object, i.e. whether an edge between points represent a straight cartesian line or the shortest line on the sphere. Defaults to "planar". Fixed and cannot be changed by schema evolution.
 
 For details on how to serialize a schema to JSON, see Appendix C.
 
