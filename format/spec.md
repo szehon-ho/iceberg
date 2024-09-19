@@ -200,7 +200,7 @@ Supported primitive types are defined in the table below. Primitive types added 
 |                  | **`uuid`**         | Universally unique identifiers                                           | Should use 16-byte fixed                         |
 |                  | **`fixed(L)`**     | Fixed-length byte array of length L                                      |                                                  |
 |                  | **`binary`**       | Arbitrary-length byte array                                              |                                                  |
-| [v3](#version-3) | **`geometry(C, CE, E)`** | An object of the simple feature geometry model as defined by Appendix G; This may be any of the geometry subclasses defined therein; crs C [4], crs-encoding CE [5], edges E [6] | C, CE, E are fixed, and if unset will take default values. Encoded as WKB, see Appendix G. |
+| [v3](#version-3) | **`geometry(C, CE, E)`** | An object of the simple feature geometry model as defined by Appendix G; This may be any of the geometry subclasses defined therein; crs C [4], crs-encoding CE [5], edges E [6] | C, CE, E are fixed, and if unset will take default values. |
 
 Notes:
 
@@ -209,7 +209,7 @@ Notes:
 3. Character strings must be stored as UTF-8 encoded byte arrays.
 4. Crs (coordinate reference system) is a mapping of how coordinates refer to precise locations on earth. Defaults to "OGC:CRS84". Fixed and cannot be changed by schema evolution.
 5. Crs-encoding (coordinate reference system encoding) is the type of crs field. Must be set if crs is set. Defaults to "PROJJSON". Fixed and cannot be changed by schema evolution.
-6. Edges is the interpretation for non-point geometries in geometry object, i.e. whether an edge between points represent a straight cartesian line or the shortest line on the sphere. Defaults to "planar". Fixed and cannot be changed by schema evolution.
+6. Edges is the interpretation for non-point geometries in geometry object, i.e. whether an edge between points represent a straight cartesian line or the shortest line on the sphere. Supported values are "planar" (default) and "spherical". Fixed and cannot be changed by schema evolution.
 
 For details on how to serialize a schema to JSON, see Appendix C.
 
