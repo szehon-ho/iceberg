@@ -1023,11 +1023,7 @@ Lists must use the [3-level representation](https://github.com/apache/parquet-fo
 | **`struct`**       | `group`                                                            |                                             |                                                                |
 | **`list`**         | `3-level list`                                                     | `LIST`                                      | See Parquet docs for 3-level representation.                   |
 | **`map`**          | `3-level map`                                                      | `MAP`                                       | See Parquet docs for 3-level representation.                   |
-| **`geometry`**     | `binary`                                                           | `GEOMETRY`                                  | WKB format, see [Appendix G](#appendix-g-geospatial-notes). Logical type annotation optional for supported Parquet format versions [1]. |
-
-Notes:
-
-1. [https://github.com/apache/parquet-format/pull/240](https://github.com/apache/parquet-format/pull/240))
+| **`geometry`**     | `binary`                                                           | `GEOMETRY`                                  | WKB format, see [Appendix G](#appendix-g-geospatial-notes).    |
 
 ### ORC
 
@@ -1054,13 +1050,12 @@ Notes:
 | **`struct`**       | `struct`            |                                                      |                                                                                         |
 | **`list`**         | `array`             |                                                      |                                                                                         |
 | **`map`**          | `map`               |                                                      |                                                                                         |
-| **`geometry`**     | `binary`            |                                                      | WKB format, see [Appendix G](#appendix-g-geospatial-notes). Optional geometry type for supported ORC format versions [3] |
+| **`geometry`**     | `binary`            |                                                      | WKB format, see [Appendix G](#appendix-g-geospatial-notes).                             |
 
 Notes:
 
 1. ORC's [TimestampColumnVector](https://orc.apache.org/api/hive-storage-api/org/apache/hadoop/hive/ql/exec/vector/TimestampColumnVector.html) consists of a time field (milliseconds since epoch) and a nanos field (nanoseconds within the second). Hence the milliseconds within the second are reported twice; once in the time field and again in the nanos field. The read adapter should only use milliseconds within the second from one of these fields. The write adapter should also report milliseconds within the second twice; once in the time field and again in the nanos field. ORC writer is expected to correctly consider millis information from one of the fields. More details at https://issues.apache.org/jira/browse/ORC-546
 2. ORC `timestamp` and `timestamp_instant` values store nanosecond precision. Iceberg ORC writers for Iceberg types `timestamp` and `timestamptz` **must** truncate nanoseconds to microseconds. `iceberg.timestamp-unit` is assumed to be `MICROS` if not present.
-3. [https://github.com/apache/orc-format/pull/18](https://github.com/apache/orc-format/pull/18)
 
 One of the interesting challenges with this is how to map Iceberg’s schema evolution (id based) on to ORC’s (name based). In theory, we could use Iceberg’s column ids as the column and field names, but that would be inconvenient.
 
@@ -1100,8 +1095,6 @@ The types below are not currently valid for bucketing, and so are not hashed. Ho
 | **`boolean`**      | `false: hashInt(0)`, `true: hashInt(1)`   | `true` ￫ `1392991556`                      |
 | **`float`**        | `hashLong(doubleToLongBits(double(v))` [5]| `1.0F` ￫ `-142385009`, `0.0F` ￫ `1669671676`, `-0.0F` ￫ `1669671676` |
 | **`double`**       | `hashLong(doubleToLongBits(v))`        [5]| `1.0D` ￫ `-142385009`, `0.0D` ￫ `1669671676`, `-0.0D` ￫ `1669671676` |
-| **`geometry`**     | `hashBytes(wkb(v))` [6]                    | `(1.0, 1.0)` ￫ `-246548298`              |
-
 
 Notes:
 
@@ -1298,7 +1291,7 @@ This serialization scheme is for storing single values as individual binary valu
 | **`struct`**                 | Not supported                                                                                                |
 | **`list`**                   | Not supported                                                                                                |
 | **`map`**                    | Not supported                                                                                                |
-| **`geometry`**       | Always a single point, it is encoded in big-endian fashion as concatenated {x, y, optional z, optional m} values. |
+| **`geometry`**               | A single point, encoded as a {x, y, optional z, optional m} concatenation of its 8-byte IEEE 754 values, little-endian. |
 
 ### JSON single-value serialization
 
@@ -1325,7 +1318,7 @@ This serialization scheme is for storing single values as individual binary valu
 | **`struct`**       | **`JSON object by field ID`**             | `{"1": 1, "2": "bar"}`                     | Stores struct fields using the field ID as the JSON field name; field values are stored using this JSON single-value format |
 | **`list`**         | **`JSON array of values`**                | `[1, 2, 3]`                                | Stores a JSON array of values that are serialized using this JSON single-value format |
 | **`map`**          | **`JSON object of key and value arrays`** | `{ "keys": ["a", "b"], "values": [1, 2] }` | Stores arrays of keys and values; individual keys and values are serialized using this JSON single-value format |
-| **`geometry`**     | **`JSON string`**                         |`00000000013FF00000000000003FF0000000000000`| Stores WKB as a hexideciamal string, see [Appendix G](#appendix-g-geospatial-notes)                                                                                                                                                                                                                      |
+| **`geometry`**     | **`JSON string`**                         | `POINT (30 10)`                            | Stored using WKT representation, see [Appendix G](#appendix-g-geospatial-notes) |
 
 ## Appendix E: Format version changes
 
@@ -1439,6 +1432,6 @@ When processing point in time queries implementations should use "snapshot-log" 
 
 ## Appendix G: Geospatial Notes
 
-The Geometry class hierarchy and WKB serialization (ISO WKB supporting XY, XYZ, XYM, XYZM) is defined by [OpenGIS Implementation Specification for Geographic information – Simple feature access – Part 1: Common architecture](https://portal.ogc.org/files/?artifact_id=25355), from [OGC (Open Geospatial Consortium)](https://www.ogc.org/standard/sfa/).
+The Geometry class hierarchy and its WKT and WKB serializations (ISO supporting XY, XYZ, XYM, XYZM) are defined by [OpenGIS Implementation Specification for Geographic information – Simple feature access – Part 1: Common architecture](https://portal.ogc.org/files/?artifact_id=25355), from [OGC (Open Geospatial Consortium)](https://www.ogc.org/standard/sfa/).
 
 The version of the OGC standard first used here is 1.2.1, but future versions may also used if the WKB representation remains wire-compatible.
