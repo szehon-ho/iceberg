@@ -473,7 +473,7 @@ The schema of a manifest file is a struct called `manifest_entry` with the follo
 | _optional_ | _optional_ | **`137  nan_value_counts`**       | `map<138: int, 139: long>`   | Map from column id to number of NaN values in the column |
 | _optional_ | _optional_ | **`111  distinct_counts`**        | `map<123: int, 124: long>`   | Map from column id to number of distinct values in the column; distinct counts must be derived using values in the file by counting or using sketches, but not using methods like merging existing distinct counts |
 | _optional_ | _optional_ | **`125  lower_bounds`**           | `map<126: int, 127: binary>` | Map from column id to lower bound in the column serialized as binary [1]. Each value must be less than or equal to all non-null, non-NaN values in the column for the file [2] For `geometry` types, see [5].        |
-| _optional_ | _optional_ | **`128  upper_bounds`**           | `map<129: int, 130: binary>` | Map from column id to upper bound in the column serialized as binary [1]. Each value must be greater than or equal to all non-null, non-Nan values in the column for the file [2] For `geometry` type, see [5]       |
+| _optional_ | _optional_ | **`128  upper_bounds`**           | `map<129: int, 130: binary>` | Map from column id to upper bound in the column serialized as binary [1]. Each value must be greater than or equal to all non-null, non-Nan values in the column for the file [2] For `geometry` type, see [6]       |
 | _optional_ | _optional_ | **`131  key_metadata`**           | `binary`                     | Implementation-specific key metadata for encryption |
 | _optional_ | _optional_ | **`132  split_offsets`**          | `list<133: long>`            | Split offsets for the data file. For example, all row group offsets in a Parquet file. Must be sorted ascending |
 |            | _optional_ | **`135  equality_ids`**           | `list<136: int>`             | Field ids used to determine row equality in equality delete files. Required when `content=2` and should be null otherwise. Fields with ids listed in this column must be present in the delete file |
@@ -485,7 +485,8 @@ Notes:
 2. For `float` and `double`, the value `-0.0` must precede `+0.0`, as in the IEEE 754 `totalOrder` predicate. NaNs are not permitted as lower or upper bounds.
 3. If sort order ID is missing or unknown, then the order is assumed to be unsorted. Only data files and equality delete files should be written with a non-null order id. [Position deletes](#position-delete-files) are required to be sorted by file and position, not a table order, and should set sort order id to null. Readers must ignore sort order id for position delete files.
 4. The following field ids are reserved on `data_file`: 141.
-5. For `geometry`, this a point composed of the min (lower_bound) or max (upper_bound) value of each dimension among all component points of all geometry objects for the file. These can be used for basic pruning only on geometry columns with planar edges. See Appendix D for encoding.
+5. For `geometry`, this is a point. X = min value of all component points of all geometries in file when edges = PLANAR, westernmost bound of all geometries in file if edges = SPHERICAL. Y = max value of all component points of all geometries in file when edges = PLANAR, northernmost bound of all geometries if edges = SPHERICAL. Z is min value for all component points of all geometries in the file. M is min value of all component points of all geometries in the file. See Appendix D for encoding.
+6. For `geometry`, this is a point. X = max value of all component points of all geometries in file when edges = PLANAR, easternmost bound of all geometries in file if edges = SPHERICAL. Y = max value of all component points of all geometries in file when edges = PLANAR, southernmost bound of all geometries if edges = SPHERICAL. Z is max value for all component points of all geometries in the file. M is max value of all component points of all geometries in the file. See Appendix D for encoding.
 
 The `partition` struct stores the tuple of partition values for each file. Its type is derived from the partition fields of the partition spec used to write the manifest file. In v2, the partition struct's field ids must match the ids from the partition spec.
 
@@ -1291,7 +1292,7 @@ This serialization scheme is for storing single values as individual binary valu
 | **`struct`**                 | Not supported                                                                                                |
 | **`list`**                   | Not supported                                                                                                |
 | **`map`**                    | Not supported                                                                                                |
-| **`geometry`**               | A single point, encoded as a {x, y, optional z, optional m} concatenation of its 8-byte IEEE 754 values, little-endian. |
+| **`geometry`**               | A single point, encoded as a {x, y, optional z, optional m} concatenation of its 8-byte little-endian IEEE 754 coordinate values, with the optional coordinates encoded as NaN if unset. |
 
 ### JSON single-value serialization
 
